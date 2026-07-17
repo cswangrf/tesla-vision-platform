@@ -1,0 +1,265 @@
+# ============================================================
+# Tesla Vision Platform - Docker Compose 部署
+# ============================================================
+# 使用方式:
+#   1. 复制 .env.example 为 .env，按需修改配置
+#   2. docker compose pull && docker compose up -d
+#   3. 首次使用 Ollama 拉取模型:
+#      docker compose exec ollama ollama pull qwen2.5:7b
+#   4. 浏览器访问 http://<服务器IP>:3000
+# ============================================================
+# 注意:
+#   - 所有 GPU 服务需 NVIDIA Container Toolkit
+#   - Ollama 绑定 GPU 2, Chinese-CLIP 绑定 GPU 0, LocateAnything 绑定 GPU 1
+#   - Spark 任务在 CPU 上运行，不占用 GPU
+# ============================================================
+
+services:
+
+  # ============================================================
+  # Redis 消息队列 / 缓存
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: tesla-vision-redis
+    restart: unless-stopped
+    volumes:
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # MinIO 对象存储（视频文件 + Parquet 数据）
+  # ============================================================
+  minio:
+    image: minio/minio:latest
+    container_name: tesla-vision-minio
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9002}:9000"       # S3 API
+      - "${MINIO_CONSOLE_PORT:-9003}:9001"   # Web 控制台
+    volumes:
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # Ollama 本地大模型服务 (GPU 2)
+  # ============================================================
+  ollama:
+    image: registry.cn-beijing.aliyuncs.com/cswangrf/ollama:latest
+    container_name: tesla-vision-ollama
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${OLLAMA_GPU_DEVICE:-2}
+      - OLLAMA_NOPRUNE=true
+    ports:
+      - "${OLLAMA_HOST_PORT:-11435}:11434"
+    volumes:
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${OLLAMA_GPU_DEVICE:-2}"]
+              capabilities: [gpu]
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # Chinese-CLIP 语义向量推理服务 (GPU 0)
+  # ============================================================
+  chinese-clip:
+    image: ${REGISTRY:-registry.cn-beijing.aliyuncs.com/cswangrf}/tesla-vision-annotation-worker:${TAG:-latest}
+    container_name: tesla-vision-chinese-clip
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${CLIP_GPU_DEVICE:-0}
+      - MODEL_TYPE=ViT-L-14
+    command: python server.py --port 8500 --model chinese-clip
+    ports:
+      - "${CLIP_PORT:-8500}:8500"
+    volumes:
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/clip-models:/models
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${CLIP_GPU_DEVICE:-0}"]
+              capabilities: [gpu]
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # LocateAnything 目标检测推理服务 (GPU 1)
+  # ============================================================
+  locate-anything:
+    image: ${REGISTRY:-registry.cn-beijing.aliyuncs.com/cswangrf}/tesla-vision-annotation-worker:${TAG:-latest}
+    container_name: tesla-vision-locate-anything
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${LAM_GPU_DEVICE:-1}
+    command: python server.py --port 8501 --model locate-anything
+    ports:
+      - "${LAM_PORT:-8501}:8501"
+    volumes:
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/lam-models:/models
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${LAM_GPU_DEVICE:-1}"]
+              capabilities: [gpu]
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # 后端 API 服务 (FastAPI)
+  # ============================================================
+  api:
+    image: ${REGISTRY:-registry.cn-beijing.aliyuncs.com/cswangrf}/tesla-vision-backend:${TAG:-latest}
+    container_name: tesla-vision-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - CLIP_SERVICE=${CLIP_SERVICE:-http://chinese-clip:8500}
+      - LAM_SERVICE=${LAM_SERVICE:-http://locate-anything:8501}
+      - OLLAMA_HOST=${OLLAMA_HOST:-ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2048}
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      chinese-clip:
+        condition: service_started
+      locate-anything:
+        condition: service_started
+      ollama:
+        condition: service_started
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # Celery 异步任务 Worker
+  # ============================================================
+  celery-worker:
+    image: ${REGISTRY:-registry.cn-beijing.aliyuncs.com/cswangrf}/tesla-vision-backend:${TAG:-latest}
+    container_name: tesla-vision-celery-worker
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=4
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - CLIP_SERVICE=${CLIP_SERVICE:-http://chinese-clip:8500}
+      - LAM_SERVICE=${LAM_SERVICE:-http://locate-anything:8501}
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      chinese-clip:
+        condition: service_started
+      locate-anything:
+        condition: service_started
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # Spark Master（分布式数据处理）
+  # ============================================================
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: tesla-vision-spark-master
+    restart: unless-stopped
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "${SPARK_MASTER_UI_PORT:-8082}:8080"    # Web UI
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+    volumes:
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/spark:/opt/spark/work-dir
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # Spark Worker
+  # ============================================================
+  spark-worker:
+    image: bitnami/spark:3.5
+    container_name: tesla-vision-spark-worker
+    restart: unless-stopped
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-16G}
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-8}
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/spark:/opt/spark/work-dir
+    depends_on:
+      - spark-master
+    networks:
+      - tesla-vision-net
+
+  # ============================================================
+  # 前端服务 (Nginx 托管 React SPA)
+  # ============================================================
+  frontend:
+    image: ${REGISTRY:-registry.cn-beijing.aliyuncs.com/cswangrf}/tesla-vision-frontend:${TAG:-latest}
+    container_name: tesla-vision-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - api
+    networks:
+      - tesla-vision-net
+
+# ============================================================
+# 网络
+# ============================================================
+networks:
+  tesla-vision-net:
+    name: tesla-vision-net
+    driver: bridge

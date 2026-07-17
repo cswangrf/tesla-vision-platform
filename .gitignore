@@ -1,0 +1,104 @@
+# ============================================================
+# Tesla Vision Platform - .gitignore
+# ============================================================
+
+# ---------- 环境变量（含密码/密钥） ----------
+.env
+.env.local
+.env.*.local
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+*.so
+.venv/
+venv/
+env/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---------- Node.js / 前端 ----------
+node_modules/
+frontend/dist/
+frontend/build/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---------- Docker ----------
+docker-compose.override.yml
+ollama-models.tar.gz
+
+# ---------- IDE / 编辑器 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ---------- OS 生成文件 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ---------- 模型文件（太大，不入库） ----------
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.ckpt
+*.h5
+*.pb
+*.caffemodel
+*.mlmodel
+*.tflite
+
+# ---------- 备份中的大型二进制文件 ----------
+backup/**/*.whl
+
+# ---------- 日志 ----------
+*.log
+logs/
+*.log.*
+
+# ---------- 运行时数据 ----------
+data/
+tmp/
+temp/
+*.tmp
+
+# ---------- 测试 / 覆盖率 ----------
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# ---------- 其他 ----------
+*.bak
+*.orig
+*.old
+
+*.whl
+*.log
+*.ps1
+
