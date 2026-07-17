@@ -6,7 +6,16 @@ import { getVideoStreamUrl } from '../services/api';
 
 const { Text } = Typography;
 
+// 视角顺序：前/后 第一行，左/右 repeater 第二行
 const VIEWS = ['front', 'back', 'left_repeater', 'right_repeater'] as const;
+
+// 视角显示标签
+const VIEW_LABELS: Record<string, string> = {
+  front: '前视 (FRONT)',
+  back: '后视 (BACK)',
+  left_repeater: '左后 (LEFT)',
+  right_repeater: '右后 (RIGHT)',
+};
 
 export interface VideoClip {
   device_id: string;
@@ -19,84 +28,128 @@ interface MultiViewPlayerProps {
 }
 
 const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
-  const playersRef = useRef<Record<string, any>>({});
+  // 缩略视频的 4 个播放器实例
+  const thumbPlayersRef = useRef<Record<string, any>>({});
+  // 主视频播放器实例
+  const mainPlayerRef = useRef<any>(null);
   const [mainView, setMainView] = useState<string>('front');
   const [isReady, setIsReady] = useState(false);
 
-  // 初始化播放器
-  const initPlayers = useCallback(() => {
+  // 销毁所有播放器
+  const disposeAll = useCallback(() => {
+    if (mainPlayerRef.current) {
+      mainPlayerRef.current.dispose();
+      mainPlayerRef.current = null;
+    }
+    VIEWS.forEach((view) => {
+      if (thumbPlayersRef.current[view]) {
+        thumbPlayersRef.current[view].dispose();
+        delete thumbPlayersRef.current[view];
+      }
+    });
+    setIsReady(false);
+  }, []);
+
+  // 初始化主视频播放器
+  const initMainPlayer = useCallback((view: string) => {
+    const el = document.getElementById('video-player-main');
+    if (!el || !clip) return;
+
+    if (mainPlayerRef.current) {
+      mainPlayerRef.current.dispose();
+      mainPlayerRef.current = null;
+    }
+
+    const videoId = clip.views[view];
+    const src = videoId ? getVideoStreamUrl(videoId) : '';
+
+    mainPlayerRef.current = videojs(
+      'video-player-main',
+      {
+        controls: true,
+        fluid: true,
+        autoplay: false,
+        preload: 'auto',
+        aspectRatio: '4:3',
+        sources: src ? [{ src, type: 'video/mp4' }] : [],
+      }
+    );
+  }, [clip]);
+
+  // 初始化 4 个缩略视频播放器
+  const initThumbPlayers = useCallback(() => {
     if (!clip) return;
 
+    let loadedCount = 0;
     VIEWS.forEach((view) => {
-      const el = document.getElementById(`video-${view}`);
+      const el = document.getElementById(`video-thumb-${view}`);
       if (!el) return;
 
-      // 销毁已存在的播放器
-      if (playersRef.current[view]) {
-        playersRef.current[view].dispose();
+      if (thumbPlayersRef.current[view]) {
+        thumbPlayersRef.current[view].dispose();
       }
 
       const videoId = clip.views[view];
       const src = videoId ? getVideoStreamUrl(videoId) : '';
 
       const player = videojs(
-        `video-${view}`,
+        `video-thumb-${view}`,
         {
-          controls: true,
+          controls: false,  // 缩略图不显示控件
           fluid: true,
           autoplay: false,
           preload: 'auto',
-          sources: src
-            ? [{ src, type: 'video/mp4' }]
-            : [],
+          aspectRatio: '4:3',
+          sources: src ? [{ src, type: 'video/mp4' }] : [],
         },
         () => {
-          if (view === VIEWS[VIEWS.length - 1]) {
+          loadedCount++;
+          if (loadedCount >= VIEWS.length) {
             setIsReady(true);
           }
         }
       );
 
-      playersRef.current[view] = player;
+      thumbPlayersRef.current[view] = player;
     });
   }, [clip]);
 
   useEffect(() => {
-    // 先清理旧播放器
-    VIEWS.forEach((view) => {
-      if (playersRef.current[view]) {
-        playersRef.current[view].dispose();
-        delete playersRef.current[view];
-      }
-    });
-    setIsReady(false);
+    disposeAll();
 
     if (clip) {
-      // 延迟初始化，确保 DOM 已存在
-      const timer = setTimeout(() => initPlayers(), 100);
+      // 先初始化缩略图播放器，再初始化主播放器
+      const timer = setTimeout(() => {
+        initThumbPlayers();
+        initMainPlayer(mainView);
+      }, 100);
+
       return () => {
         clearTimeout(timer);
-        VIEWS.forEach((view) => {
-          if (playersRef.current[view]) {
-            playersRef.current[view].dispose();
-          }
-        });
+        disposeAll();
       };
     }
-  }, [clip, initPlayers]);
+  }, [clip]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 同步播放器
+  // 切换主视图时重建主播放器
+  useEffect(() => {
+    if (clip && isReady) {
+      initMainPlayer(mainView);
+    }
+  }, [mainView]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 同步播放：主播放器控制所有缩略播放器
   useEffect(() => {
     if (!isReady) return;
 
-    const mainPlayer = playersRef.current[mainView];
+    const mainPlayer = mainPlayerRef.current;
     if (!mainPlayer) return;
 
     const onTimeUpdate = () => {
       const currentTime = mainPlayer.currentTime();
       VIEWS.forEach((v) => {
-        const p = playersRef.current[v];
-        if (v !== mainView && p && Math.abs(p.currentTime() - currentTime) > 0.5) {
+        const p = thumbPlayersRef.current[v];
+        if (p && Math.abs(p.currentTime() - currentTime) > 0.5) {
           p.currentTime(currentTime);
         }
       });
@@ -105,15 +158,15 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
     mainPlayer.on('timeupdate', onTimeUpdate);
     mainPlayer.on('play', () => {
       VIEWS.forEach((v) => {
-        if (v !== mainView && playersRef.current[v]) {
-          playersRef.current[v].play();
+        if (thumbPlayersRef.current[v]) {
+          thumbPlayersRef.current[v].play();
         }
       });
     });
     mainPlayer.on('pause', () => {
       VIEWS.forEach((v) => {
-        if (v !== mainView && playersRef.current[v]) {
-          playersRef.current[v].pause();
+        if (thumbPlayersRef.current[v]) {
+          thumbPlayersRef.current[v].pause();
         }
       });
     });
@@ -150,81 +203,112 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
     );
   }
 
-  // 网格布局
-  const otherViews = VIEWS.filter((v) => v !== mainView);
-
   return (
-    <div style={{ padding: 16, height: '100%' }}>
-      <div
-        style={{
-          marginBottom: 12,
-          padding: '8px 12px',
-          background: '#fff',
-          borderRadius: 6,
-          border: '1px solid #e8e8e8',
-        }}
-      >
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      gap: 8,
+      padding: 12,
+    }}>
+      {/* 信息栏 */}
+      <div style={{
+        padding: '4px 12px',
+        background: '#fff',
+        borderRadius: 6,
+        border: '1px solid #e8e8e8',
+        display: 'flex',
+        alignItems: 'center',
+        flexShrink: 0,
+      }}>
         <Text strong>当前播放：</Text>
-        <Text code style={{ marginLeft: 8 }}>
-          {clip.device_id}
-        </Text>
-        <Text type="secondary" style={{ marginLeft: 8 }}>
-          {clip.timestamp}
-        </Text>
+        <Text code style={{ marginLeft: 8 }}>{clip.device_id}</Text>
+        <Text type="secondary" style={{ marginLeft: 8 }}>{clip.timestamp}</Text>
       </div>
-      <div
-        className="player-grid"
-        style={{
-          display: 'grid',
-          gridTemplateAreas: `
-            "${mainView} ${mainView}"
-            "${otherViews[0] || 'none1'} ${otherViews[1] || 'none2'}"
-            "${otherViews[2] || 'none3'} none4"
-          `,
-          gridTemplateColumns: '1fr 1fr',
-          gridTemplateRows: mainView ? '2fr 1fr 1fr' : '1fr 1fr',
-          gap: 8,
-          height: '100%',
-          maxHeight: 'calc(100vh - 150px)',
-        }}
-      >
-        {VIEWS.map((view) => (
-          <div
-            key={view}
-            onClick={() => setMainView(view)}
-            style={{
-              gridArea: view,
-              position: 'relative',
-              border: view === mainView ? '2px solid #1890ff' : '1px solid #d9d9d9',
-              borderRadius: 4,
-              overflow: 'hidden',
-              cursor: 'pointer',
-              background: '#000',
-              transition: 'all 0.3s ease',
-            }}
-          >
+
+      {/* 主视频 */}
+      <div style={{
+        flex: 1,
+        minHeight: 0,
+        borderRadius: 6,
+        border: '2px solid #1890ff',
+        overflow: 'hidden',
+        background: '#000',
+        position: 'relative',
+      }}>
+        <div style={{
+          position: 'absolute',
+          top: 8,
+          left: 8,
+          zIndex: 10,
+          background: 'rgba(24, 144, 255, 0.85)',
+          color: '#fff',
+          padding: '2px 10px',
+          borderRadius: 4,
+          fontSize: 14,
+          fontWeight: 600,
+          pointerEvents: 'none',
+        }}>
+          {VIEW_LABELS[mainView] || mainView}
+        </div>
+        <video
+          id="video-player-main"
+          className="video-js vjs-default-skin"
+          style={{ width: '100%', height: '100%' }}
+        />
+      </div>
+
+      {/* 4 个小视频缩略图：2 行 × 2 列 */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gridTemplateRows: '1fr 1fr',
+        gap: 6,
+        flexShrink: 0,
+        height: '35%',
+        minHeight: 120,
+      }}>
+        {VIEWS.map((view) => {
+          const isActive = view === mainView;
+          return (
             <div
+              key={view}
+              onClick={() => setMainView(view)}
               style={{
-                position: 'absolute',
-                top: 8,
-                left: 8,
-                zIndex: 10,
-                background: 'rgba(0,0,0,0.6)',
-                color: '#fff',
-                padding: '2px 8px',
                 borderRadius: 4,
-                fontSize: 12,
+                border: isActive ? '2px solid #1890ff' : '1px solid #555',
+                overflow: 'hidden',
+                cursor: 'pointer',
+                background: '#000',
+                position: 'relative',
+                opacity: isActive ? 0.55 : 1,
+                transition: 'all 0.2s ease',
               }}
+              title={`点击将此视角切换为主视图`}
             >
-              {view.replace('_', ' ').toUpperCase()}
+              <div style={{
+                position: 'absolute',
+                top: 4,
+                left: 4,
+                zIndex: 10,
+                background: isActive ? 'rgba(24, 144, 255, 0.8)' : 'rgba(0, 0, 0, 0.55)',
+                color: '#fff',
+                padding: '1px 6px',
+                borderRadius: 3,
+                fontSize: 11,
+                pointerEvents: 'none',
+              }}>
+                {VIEW_LABELS[view] || view}
+                {isActive ? ' ✓' : ''}
+              </div>
+              <video
+                id={`video-thumb-${view}`}
+                className="video-js vjs-default-skin"
+                style={{ width: '100%', height: '100%' }}
+              />
             </div>
-            <video
-              id={`video-${view}`}
-              className="video-js vjs-default-skin"
-              style={{ width: '100%', height: '100%' }}
-            />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

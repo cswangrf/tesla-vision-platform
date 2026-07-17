@@ -14,6 +14,8 @@ import argparse
 import logging
 import os
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
 
@@ -38,15 +40,14 @@ class ClassifyRequest(BaseModel):
 # ============================================================
 # FastAPI 应用
 # ============================================================
-app = FastAPI(title="Tesla Vision Inference Worker")
 
-# 模型实例（在 startup 事件中初始化）
+# 模型实例（在 lifespan 中初始化）
 model_instance = None
 
 
-@app.on_event("startup")
-async def startup_event():
-    """启动时加载模型"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时加载模型，关闭时释放资源"""
     global model_instance
 
     # 解析命令行参数（在 uvicorn 启动前已通过 if __name__ 块设置环境变量）
@@ -68,6 +69,17 @@ async def startup_event():
     except Exception as e:
         logger.error(f"模型加载失败 (服务将以降级模式运行): {e}", exc_info=True)
         model_instance = None
+
+    yield  # 服务运行期间
+
+    # 关闭时清理
+    if model_instance is not None:
+        del model_instance
+        model_instance = None
+    logger.info("推理服务已关闭")
+
+
+app = FastAPI(title="Tesla Vision Inference Worker", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -163,7 +175,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # 将参数传入环境变量供 startup 事件使用
+    # 将参数传入环境变量供 lifespan 事件使用
     os.environ["INFERENCE_MODEL"] = args.model
     os.environ["MODEL_TYPE"] = args.model_type
     os.environ["PORT"] = str(args.port)

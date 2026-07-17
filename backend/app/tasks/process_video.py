@@ -13,6 +13,8 @@ from typing import List, Dict, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from minio import Minio
+from minio.error import S3Error
 
 from app.tasks.celery_app import celery_app
 from app.utils.video_utils import extract_frames, get_video_info, compute_blur_score
@@ -24,6 +26,14 @@ from app.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# MinIO 客户端
+_minio_client = Minio(
+    MINIO_ENDPOINT,
+    access_key=MINIO_ACCESS_KEY,
+    secret_key=MINIO_SECRET_KEY,
+    secure=False,
+)
 
 # 任务状态存储（引用 tasks.py 中的共享存储）
 try:
@@ -42,6 +52,28 @@ def _update_task_status(task_id: str, status: str, progress: float = None, error
         if error:
             task.error = error
         task.updated_at = datetime.now()
+
+
+def _download_video_from_minio(video_id: str, dest_path: str) -> bool:
+    """
+    从 MinIO 下载视频到本地路径。
+
+    通过 video_id（etag 前8位）查找 MinIO 中的对象并下载。
+    返回 True 表示下载成功。
+    """
+    objects = _minio_client.list_objects(MINIO_BUCKET_RAW, prefix="raw/", recursive=True)
+    for obj in objects:
+        if obj.etag and obj.etag[:8] == video_id:
+            try:
+                _minio_client.fget_object(MINIO_BUCKET_RAW, obj.object_name, dest_path)
+                logger.info(f"从 MinIO 下载视频: {obj.object_name} -> {dest_path} "
+                            f"({obj.size / 1024 / 1024:.1f} MB)")
+                return True
+            except S3Error as e:
+                logger.error(f"下载视频失败: {e}")
+                return False
+    logger.warning(f"未找到 video_id={video_id} 对应的 MinIO 对象")
+    return False
 
 
 @celery_app.task(bind=True, name="process_video")
@@ -74,9 +106,11 @@ def process_video_task(self, task_id: str, video_ids: List[str]):
 
             # 在临时目录中处理
             with tempfile.TemporaryDirectory() as tmpdir:
-                # TODO: 从 MinIO 下载视频
-                # 目前使用模拟数据演示流程
+                # 从 MinIO 下载视频
                 video_path = os.path.join(tmpdir, f"{video_id}.mp4")
+                if not _download_video_from_minio(video_id, video_path):
+                    logger.error(f"无法下载视频 {video_id}，跳过")
+                    continue
 
                 # 抽帧
                 frames_dir = os.path.join(tmpdir, "frames")

@@ -8,7 +8,7 @@ import {
   DeleteOutlined, CloudUploadOutlined,
 } from '@ant-design/icons';
 import type { UploadFile, RcFile } from 'antd/es/upload/interface';
-import { uploadVideo } from '../services/api';
+import { uploadVideo, createTask } from '../services/api';
 
 const { Dragger } = Upload;
 const { Text } = Typography;
@@ -122,6 +122,7 @@ const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     setBatchUploading(true);
     let successCount = 0;
     let failCount = 0;
+    const uploadedVideoIds: string[] = [];
 
     const updatedItems = [...uploadItems];
 
@@ -139,7 +140,8 @@ const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
         formData.append('timestamp', timestamp);
         formData.append('camera_view', item.camera_view);
 
-        await uploadVideo(formData);
+        const result = await uploadVideo(formData);
+        uploadedVideoIds.push(result.video_id);
         updatedItems[i] = { ...updatedItems[i], status: 'done', progress: 100 };
         successCount++;
       } catch (err: any) {
@@ -158,6 +160,17 @@ const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
 
     if (failCount === 0) {
       message.success(`全部 ${successCount} 个视频上传成功！`);
+
+      // 自动触发标注任务
+      if (uploadedVideoIds.length > 0) {
+        try {
+          const task = await createTask(uploadedVideoIds);
+          message.info(`已自动提交标注任务 (${task.task_id})`, 5);
+        } catch {
+          message.warning('标注任务提交失败，可稍后手动触发');
+        }
+      }
+
       onSuccess();
       // 重置状态
       setUploadItems([]);

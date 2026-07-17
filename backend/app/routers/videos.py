@@ -120,10 +120,16 @@ async def list_videos(
         if device_id and obj_device_id != device_id:
             continue
 
+        # 解析路径中的时间戳: 格式 YYYY-MM-DD_HH-MM-SS
+        try:
+            parsed_ts = datetime.strptime(obj_timestamp, "%Y-%m-%d_%H-%M-%S")
+        except ValueError:
+            parsed_ts = datetime.now()
+
         videos.append(VideoMetadata(
             video_id=obj.etag[:8] if obj.etag else str(uuid.uuid4())[:8],
             device_id=obj_device_id,
-            timestamp=datetime.fromisoformat(obj_timestamp) if obj_timestamp.isdigit() else datetime.now(),
+            timestamp=parsed_ts,
             camera_view=camera_view,
             duration_sec=0.0,  # 需要解析视频获取
             fps=0.0,

@@ -21,5 +21,9 @@ pydantic>=2.0.0
 python-multipart>=0.0.6
 
 # Chinese-CLIP 专用依赖
-transformers>=4.36.0
+# 注意: transformers>=4.45 依赖 torch.distributed.tensor.DTensor，
+# 与基础镜像 pytorch/pytorch:2.4.0 不兼容，需固定到 4.44.x
+transformers==4.44.2
 timm>=0.9.0
+# 降级回退: 当 transformers.ChineseCLIPProcessor 不可用时使用 cn-clip
+cn-clip>=1.0.1
