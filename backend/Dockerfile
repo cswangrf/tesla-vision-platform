@@ -39,7 +39,6 @@ RUN pip install --no-cache-dir \
 
 # 复制应用代码
 COPY app/ ./app/
-COPY tasks/ ./tasks/
 
 # 创建数据目录
 RUN mkdir -p /app/data

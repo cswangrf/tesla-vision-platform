@@ -1,20 +1,32 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
+import { Empty, Typography } from 'antd';
+import { getVideoStreamUrl } from '../services/api';
+
+const { Text } = Typography;
 
 const VIEWS = ['front', 'back', 'left_repeater', 'right_repeater'] as const;
 
-interface MultiViewPlayerProps {
-  baseUrl: string;
+export interface VideoClip {
+  device_id: string;
+  timestamp: string;
+  views: Record<string, string>; // view -> video_id
 }
 
-const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ baseUrl }) => {
+interface MultiViewPlayerProps {
+  clip: VideoClip | null;
+}
+
+const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
   const playersRef = useRef<Record<string, any>>({});
   const [mainView, setMainView] = useState<string>('front');
   const [isReady, setIsReady] = useState(false);
 
   // 初始化播放器
   const initPlayers = useCallback(() => {
+    if (!clip) return;
+
     VIEWS.forEach((view) => {
       const el = document.getElementById(`video-${view}`);
       if (!el) return;
@@ -24,6 +36,9 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ baseUrl }) => {
         playersRef.current[view].dispose();
       }
 
+      const videoId = clip.views[view];
+      const src = videoId ? getVideoStreamUrl(videoId) : '';
+
       const player = videojs(
         `video-${view}`,
         {
@@ -31,12 +46,9 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ baseUrl }) => {
           fluid: true,
           autoplay: false,
           preload: 'auto',
-          sources: [
-            {
-              src: `${baseUrl}/stream/${view}`,
-              type: 'video/mp4',
-            },
-          ],
+          sources: src
+            ? [{ src, type: 'video/mp4' }]
+            : [],
         },
         () => {
           if (view === VIEWS[VIEWS.length - 1]) {
@@ -47,20 +59,31 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ baseUrl }) => {
 
       playersRef.current[view] = player;
     });
-  }, [baseUrl]);
+  }, [clip]);
 
   useEffect(() => {
-    initPlayers();
+    // 先清理旧播放器
+    VIEWS.forEach((view) => {
+      if (playersRef.current[view]) {
+        playersRef.current[view].dispose();
+        delete playersRef.current[view];
+      }
+    });
+    setIsReady(false);
 
-    return () => {
-      // 清理所有播放器
-      VIEWS.forEach((view) => {
-        if (playersRef.current[view]) {
-          playersRef.current[view].dispose();
-        }
-      });
-    };
-  }, [initPlayers]);
+    if (clip) {
+      // 延迟初始化，确保 DOM 已存在
+      const timer = setTimeout(() => initPlayers(), 100);
+      return () => {
+        clearTimeout(timer);
+        VIEWS.forEach((view) => {
+          if (playersRef.current[view]) {
+            playersRef.current[view].dispose();
+          }
+        });
+      };
+    }
+  }, [clip, initPlayers]);
 
   // 同步播放器
   useEffect(() => {
@@ -100,11 +123,55 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ baseUrl }) => {
     };
   }, [mainView, isReady]);
 
+  // 无视频时显示空状态
+  if (!clip) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          minHeight: 400,
+          background: '#f0f2f5',
+          borderRadius: 8,
+          margin: 16,
+        }}
+      >
+        <Empty
+          description={
+            <span>
+              暂无视频数据<br />
+              <Text type="secondary">请先上传 Tesla 视频或从列表中选择一个视频片段</Text>
+            </span>
+          }
+        />
+      </div>
+    );
+  }
+
   // 网格布局
   const otherViews = VIEWS.filter((v) => v !== mainView);
 
   return (
     <div style={{ padding: 16, height: '100%' }}>
+      <div
+        style={{
+          marginBottom: 12,
+          padding: '8px 12px',
+          background: '#fff',
+          borderRadius: 6,
+          border: '1px solid #e8e8e8',
+        }}
+      >
+        <Text strong>当前播放：</Text>
+        <Text code style={{ marginLeft: 8 }}>
+          {clip.device_id}
+        </Text>
+        <Text type="secondary" style={{ marginLeft: 8 }}>
+          {clip.timestamp}
+        </Text>
+      </div>
       <div
         className="player-grid"
         style={{
@@ -118,7 +185,7 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ baseUrl }) => {
           gridTemplateRows: mainView ? '2fr 1fr 1fr' : '1fr 1fr',
           gap: 8,
           height: '100%',
-          maxHeight: 'calc(100vh - 100px)',
+          maxHeight: 'calc(100vh - 150px)',
         }}
       >
         {VIEWS.map((view) => (

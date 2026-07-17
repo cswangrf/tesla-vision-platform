@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from app.routers import videos, tasks, chat
-from app.config import settings
 
 app = FastAPI(title="Tesla Vision Platform")
 

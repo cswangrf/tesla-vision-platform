@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from minio import Minio
 from minio.error import S3Error
 
@@ -141,6 +142,42 @@ async def list_videos(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/stream/{video_id}")
+async def stream_video(video_id: str):
+    """
+    流式传输视频文件。根据 video_id 查找 MinIO 中的原始视频并返回。
+    video_id 格式: {device_id}/{timestamp}/{camera_view}.mp4
+    也支持短 ID (etag 前8位) 模糊匹配。
+    """
+    _ensure_bucket()
+
+    objects = _minio_client.list_objects(MINIO_BUCKET_RAW, prefix="raw/", recursive=True)
+    target_object = None
+
+    for obj in objects:
+        # 支持两种匹配方式：完整路径匹配 或 etag 前8位匹配
+        relative_path = obj.object_name.replace("raw/", "")
+        if relative_path == video_id or (obj.etag and obj.etag[:8] == video_id):
+            target_object = obj
+            break
+
+    if not target_object:
+        raise HTTPException(status_code=404, detail=f"视频不存在: {video_id}")
+
+    # 流式返回 MinIO 对象
+    try:
+        response = _minio_client.get_object(MINIO_BUCKET_RAW, target_object.object_name)
+        return StreamingResponse(
+            response.stream(64 * 1024),
+            media_type="video/mp4",
+            headers={
+                "Content-Disposition": f'inline; filename="{target_object.object_name.split("/")[-1]}"',
+            },
+        )
+    except S3Error as e:
+        raise HTTPException(status_code=500, detail=f"读取视频失败: {str(e)}")
 
 
 @router.delete("/{video_id}")

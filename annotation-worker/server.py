@@ -55,22 +55,26 @@ async def startup_event():
 
     logger.info(f"加载模型: {model_type} (variant: {model_variant})")
 
-    if model_type == "chinese-clip":
-        model_instance = ChineseClip(model_type=model_variant)
-    elif model_type == "locate-anything":
-        model_instance = LocateAnything3B()
-    else:
-        raise ValueError(f"不支持的模型类型: {model_type}")
+    try:
+        if model_type == "chinese-clip":
+            model_instance = ChineseClip(model_type=model_variant)
+        elif model_type == "locate-anything":
+            model_instance = LocateAnything3B()
+        else:
+            raise ValueError(f"不支持的模型类型: {model_type}")
 
-    model_instance.load_model()
-    logger.info("模型加载完成")
+        model_instance.load_model()
+        logger.info("模型加载完成")
+    except Exception as e:
+        logger.error(f"模型加载失败 (服务将以降级模式运行): {e}", exc_info=True)
+        model_instance = None
 
 
 @app.get("/health")
 async def health():
     """健康检查"""
     return {
-        "status": "ok",
+        "status": "ok" if model_instance is not None else "degraded",
         "model": os.environ.get("INFERENCE_MODEL", "unknown"),
         "model_loaded": model_instance is not None,
     }

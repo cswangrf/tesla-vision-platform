@@ -6,7 +6,7 @@ import {
   RobotOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
-import MultiViewPlayer from './components/MultiViewPlayer';
+import VideoBrowser from './components/VideoBrowser';
 import ChatPanel from './components/ChatPanel';
 
 const { Header, Content, Sider } = Layout;
@@ -27,7 +27,7 @@ const App: React.FC = () => {
           </div>
         );
       case 'browser':
-        return <MultiViewPlayer baseUrl="/api/videos" />;
+        return <VideoBrowser />;
       case 'chat':
         return <ChatPanel />;
       case 'settings':

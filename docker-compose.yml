@@ -15,7 +15,6 @@
 # ============================================================
 
 services:
-
   # ============================================================
   # Redis 消息队列 / 缓存
   # ============================================================
@@ -24,7 +23,7 @@ services:
     container_name: tesla-vision-redis
     restart: unless-stopped
     volumes:
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/redis:/data
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -45,10 +44,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "${MINIO_API_PORT:-9002}:9000"       # S3 API
-      - "${MINIO_CONSOLE_PORT:-9003}:9001"   # Web 控制台
+      - "${MINIO_API_PORT:-9002}:9000" # S3 API
+      - "${MINIO_CONSOLE_PORT:-9003}:9001" # Web 控制台
     volumes:
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/minio:/data
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/minio:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -71,7 +70,7 @@ services:
     ports:
       - "${OLLAMA_HOST_PORT:-11435}:11434"
     volumes:
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/ollama:/root/.ollama
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/ollama:/root/.ollama
     deploy:
       resources:
         reservations:
@@ -93,12 +92,13 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=${CLIP_GPU_DEVICE:-0}
       - MODEL_TYPE=ViT-L-14
+      - PORT=8500
     command: python server.py --port 8500 --model chinese-clip
     ports:
       - "${CLIP_PORT:-8500}:8500"
     volumes:
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/clip-models:/models
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/huggingface:/root/.cache/huggingface
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/clip-models:/models
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/huggingface:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
@@ -119,12 +119,13 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=${LAM_GPU_DEVICE:-1}
+      - PORT=8501
     command: python server.py --port 8501 --model locate-anything
     ports:
       - "${LAM_PORT:-8501}:8501"
     volumes:
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/lam-models:/models
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/huggingface:/root/.cache/huggingface
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/lam-models:/models
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/huggingface:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
@@ -148,11 +149,11 @@ services:
     environment:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
       - CLIP_SERVICE=${CLIP_SERVICE:-http://chinese-clip:8500}
       - LAM_SERVICE=${LAM_SERVICE:-http://locate-anything:8501}
-      - OLLAMA_HOST=${OLLAMA_HOST:-ollama:11434}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
@@ -177,13 +178,13 @@ services:
   celery-worker:
     image: ${REGISTRY:-registry.cn-beijing.aliyuncs.com/cswangrf}/tesla-vision-backend:${TAG:-latest}
     container_name: tesla-vision-celery-worker
-    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=4
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4
     restart: unless-stopped
     environment:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
       - CLIP_SERVICE=${CLIP_SERVICE:-http://chinese-clip:8500}
       - LAM_SERVICE=${LAM_SERVICE:-http://locate-anything:8501}
     depends_on:
@@ -212,10 +213,10 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
     ports:
-      - "${SPARK_MASTER_UI_PORT:-8082}:8080"    # Web UI
+      - "${SPARK_MASTER_UI_PORT:-8082}:8080" # Web UI
       - "${SPARK_MASTER_PORT:-7077}:7077"
     volumes:
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/spark:/opt/spark/work-dir
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/spark:/opt/spark/work-dir
     networks:
       - tesla-vision-net
 
@@ -236,7 +237,7 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
     volumes:
-      - ${DATA_ROOT:-/mnt/sdc/seafile/tesla-vision-platform/data}/spark:/opt/spark/work-dir
+      - ${DATA_ROOT:-/mnt/sdc/vision-platform}/spark:/opt/spark/work-dir
     depends_on:
       - spark-master
     networks:

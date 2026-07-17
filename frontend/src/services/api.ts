@@ -93,9 +93,7 @@ export async function chatQuery(
 export async function uploadVideo(
   formData: FormData,
 ): Promise<{ video_id: string; filename: string }> {
-  const response = await apiClient.post('/videos/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
+  const response = await apiClient.post('/videos/upload', formData);
   return response.data;
 }
 
@@ -136,6 +134,19 @@ export async function listTasks(status?: string): Promise<TaskResponse[]> {
 
   const response = await apiClient.get<TaskResponse[]>('/tasks/', { params });
   return response.data;
+}
+
+// ============================================================
+// 视频流 URL 工具
+// ============================================================
+/**
+ * 获取视频流 URL。
+ * 支持两种格式：
+ * - 完整路径: device_id/timestamp/camera_view.mp4
+ * - 短 ID: etag 前8位
+ */
+export function getVideoStreamUrl(videoId: string): string {
+  return `${API_BASE_URL}/videos/stream/${encodeURIComponent(videoId)}`;
 }
 
 // ============================================================
