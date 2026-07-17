@@ -14,9 +14,9 @@ const API_BASE_URL = '/api';
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  // 不设置默认 Content-Type，让 axios 根据数据类型自动推断：
+  // - FormData → multipart/form-data（含 boundary）
+  // - 普通对象 → application/json
 });
 
 // ============================================================

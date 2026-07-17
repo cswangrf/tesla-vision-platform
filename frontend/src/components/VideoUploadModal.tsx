@@ -14,6 +14,7 @@ const { Dragger } = Upload;
 const { Text } = Typography;
 
 const CAMERA_VIEWS = ['front', 'back', 'left_repeater', 'right_repeater'];
+const DEFAULT_DEVICE_ID = 'Tesla-ModelY-001';
 
 interface UploadItem {
   key: string;
@@ -30,6 +31,38 @@ interface VideoUploadModalProps {
   onSuccess: () => void;
 }
 
+/**
+ * 从文件名中尝试解析时间戳。
+ * 支持格式: YYYY-MM-DD_HH-MM-SS 或 YYYYMMDD_HHMMSS
+ * 例如: "2025-01-15_18-30-00-front.mp4" → "2025-01-15_18-30-00"
+ */
+function parseTimestampFromFilename(filename: string): string | null {
+  // 匹配 YYYY-MM-DD_HH-MM-SS
+  const match1 = filename.match(/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/);
+  if (match1) return match1[1];
+  // 匹配 YYYYMMDD_HHMMSS
+  const match2 = filename.match(/(\d{8}_\d{6})/);
+  if (match2) return match2[1];
+  return null;
+}
+
+/**
+ * 从文件名中尝试解析相机视角。
+ * 例如: "...front.mp4" → "front"
+ *       "...back.mp4"  → "back"
+ *       "...left_repeater.mp4" → "left_repeater"
+ *       "...right_repeater.mp4" → "right_repeater"
+ */
+function parseCameraViewFromFilename(filename: string): string | null {
+  const lower = filename.toLowerCase();
+  // 优先匹配完整关键词
+  if (lower.includes('right_repeater') || lower.includes('right-repeater')) return 'right_repeater';
+  if (lower.includes('left_repeater') || lower.includes('left-repeater')) return 'left_repeater';
+  if (lower.includes('front')) return 'front';
+  if (lower.includes('back') || lower.includes('rear')) return 'back';
+  return null;
+}
+
 const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
   open, onClose, onSuccess,
 }) => {
@@ -37,16 +70,30 @@ const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [batchUploading, setBatchUploading] = useState(false);
 
-  // 处理文件拖拽/选择 – 为每个文件创建上传项（默认 camera_view 为 front）
+  // 处理文件拖拽/选择 – 自动解析文件名中的时间戳和视角
   const handleFilesAdded = useCallback((files: RcFile[]) => {
-    const newItems: UploadItem[] = files.map((file, idx) => ({
-      key: `${Date.now()}-${idx}`,
-      file,
-      camera_view: CAMERA_VIEWS[idx % CAMERA_VIEWS.length] || 'front',
-      status: 'pending' as const,
-    }));
+    const newItems: UploadItem[] = files.map((file, idx) => {
+      // 尝试从文件名解析视角
+      const parsedView = parseCameraViewFromFilename(file.name);
+      const cameraView = parsedView || CAMERA_VIEWS[idx % CAMERA_VIEWS.length] || 'front';
+      return {
+        key: `${Date.now()}-${idx}`,
+        file,
+        camera_view: cameraView,
+        status: 'pending' as const,
+      };
+    });
+
     setUploadItems((prev) => [...prev, ...newItems]);
-  }, []);
+
+    // 从第一个文件名中尝试提取时间戳并自动填入表单
+    if (files.length > 0) {
+      const ts = parseTimestampFromFilename(files[0].name);
+      if (ts && !form.getFieldValue('timestamp')) {
+        form.setFieldsValue({ timestamp: ts });
+      }
+    }
+  }, [form]);
 
   const handleRemoveItem = (key: string) => {
     setUploadItems((prev) => prev.filter((item) => item.key !== key));
@@ -171,6 +218,7 @@ const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       <Form
         form={form}
         layout="inline"
+        initialValues={{ device_id: DEFAULT_DEVICE_ID }}
         style={{ marginBottom: 16, gap: 8, flexWrap: 'wrap' }}
       >
         <Form.Item

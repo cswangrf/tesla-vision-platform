@@ -2,6 +2,7 @@
 Tesla Vision Platform - 视频管理路由
 """
 
+import io
 import uuid
 import os
 from datetime import datetime
@@ -69,11 +70,13 @@ async def upload_video(
     storage_path = f"raw/{device_id}/{timestamp}/{camera_view}{ext}"
 
     # 上传到 MinIO
+    # 注意: minio-py 的 put_object 要求 data 是 file-like 对象（有 .read() 方法），
+    # 不能直接传 bytes，需要包装为 BytesIO
     content = await file.read()
     _minio_client.put_object(
         MINIO_BUCKET_RAW,
         storage_path,
-        data=content if isinstance(content, bytes) else None,
+        data=io.BytesIO(content),
         length=len(content),
         content_type="video/mp4",
     )
