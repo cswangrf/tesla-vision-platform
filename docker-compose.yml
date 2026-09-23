@@ -196,6 +196,14 @@ services:
         condition: service_started
       locate-anything:
         condition: service_started
+    # 镜像自带 HEALTHCHECK 访问 8000 端口（API 服务），worker 容器没有 HTTP 服务，
+    # 这里用 celery inspect ping 覆盖
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.tasks.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - tesla-vision-net
 

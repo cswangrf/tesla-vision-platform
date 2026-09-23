@@ -37,8 +37,8 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # 从构建阶段复制编译好的文件
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# 健康检查
+# 健康检查（显式用 127.0.0.1 避免 wget 先解析 IPv6 ::1 导致误判）
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:80/health || exit 1
+    CMD wget -qO- http://127.0.0.1/health || exit 1
 
 EXPOSE 80
