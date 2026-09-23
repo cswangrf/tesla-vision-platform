@@ -8,6 +8,7 @@ import {
 } from '@ant-design/icons';
 import VideoBrowser from './components/VideoBrowser';
 import ChatPanel from './components/ChatPanel';
+import Dashboard from './components/Dashboard';
 
 const { Header, Content, Sider } = Layout;
 const { Title } = Typography;
@@ -20,12 +21,7 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (currentPage) {
       case 'dashboard':
-        return (
-          <div style={{ padding: 24 }}>
-            <Title level={3}>数据看板</Title>
-            <p>处理进度、标注统计等信息将在此展示。</p>
-          </div>
-        );
+        return <Dashboard />;
       case 'browser':
         return <VideoBrowser />;
       case 'chat':

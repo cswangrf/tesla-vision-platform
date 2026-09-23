@@ -96,6 +96,36 @@ export async function chatQuery(
 }
 
 // ============================================================
+// Stats API（数据看板）
+// ============================================================
+export interface StatsSummary {
+  videos: {
+    total_files: number;
+    clips: number;
+    devices: string[];
+    total_size_bytes: number;
+  };
+  annotations: {
+    total_frames?: number;
+    matched_frames?: number;
+    object_distribution?: Record<string, number>;
+    tag_distribution?: Record<string, number>;
+    matched_videos?: Array<{
+      video_id: string;
+      date: string;
+      uploaded_date: string;
+      matched_frames: number;
+    }>;
+  };
+  tasks: Record<string, number>;
+}
+
+export async function getStats(): Promise<StatsSummary> {
+  const response = await apiClient.get<StatsSummary>('/stats/summary');
+  return response.data;
+}
+
+// ============================================================
 // Videos API
 // ============================================================
 export async function uploadVideo(
