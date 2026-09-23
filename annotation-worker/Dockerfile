@@ -9,6 +9,13 @@ LABEL description="Tesla Vision Platform - Annotation Inference Worker"
 
 WORKDIR /app
 
+# 设置 CUDA 环境变量（供 Grounding DINO 自定义 kernel 编译使用）
+# 注意: runtime 镜像不含 nvcc 编译器，MultiScaleDeformableAttention
+# 自定义 kernel 无法 JIT 编译，会回退到纯 Python 实现（功能正常，速度略慢）。
+# 如需极致推理速度，可改用 pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel。
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+
 # 配置 apt 镜像源（阿里云）
 RUN sed -i 's|http://.*.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || \
     sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true

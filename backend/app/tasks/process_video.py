@@ -58,7 +58,9 @@ def _download_video_from_minio(video_id: str, dest_path: str) -> bool:
     """
     从 MinIO 下载视频到本地路径。
 
-    通过 video_id（etag 前8位）查找 MinIO 中的对象并下载。
+    通过 video_id（etag 前 8 位）查找 MinIO 中的对象并下载。
+    与上传端点 /api/videos/upload 和列表端点 /api/videos/ 的 video_id 约定一致。
+
     返回 True 表示下载成功。
     """
     objects = _minio_client.list_objects(MINIO_BUCKET_RAW, prefix="raw/", recursive=True)

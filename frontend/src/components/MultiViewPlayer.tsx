@@ -155,24 +155,32 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
       });
     };
 
+    const onPlay = () => {
+      VIEWS.forEach((v) => {
+        const p = thumbPlayersRef.current[v];
+        if (p && p.paused()) {
+          p.play();
+        }
+      });
+    };
+
+    const onPause = () => {
+      VIEWS.forEach((v) => {
+        const p = thumbPlayersRef.current[v];
+        if (p && !p.paused()) {
+          p.pause();
+        }
+      });
+    };
+
     mainPlayer.on('timeupdate', onTimeUpdate);
-    mainPlayer.on('play', () => {
-      VIEWS.forEach((v) => {
-        if (thumbPlayersRef.current[v]) {
-          thumbPlayersRef.current[v].play();
-        }
-      });
-    });
-    mainPlayer.on('pause', () => {
-      VIEWS.forEach((v) => {
-        if (thumbPlayersRef.current[v]) {
-          thumbPlayersRef.current[v].pause();
-        }
-      });
-    });
+    mainPlayer.on('play', onPlay);
+    mainPlayer.on('pause', onPause);
 
     return () => {
       mainPlayer.off('timeupdate', onTimeUpdate);
+      mainPlayer.off('play', onPlay);
+      mainPlayer.off('pause', onPause);
     };
   }, [mainView, isReady]);
 

@@ -62,9 +62,6 @@ async def upload_video(
     """
     _ensure_bucket()
 
-    # 生成唯一 video_id
-    video_id = str(uuid.uuid4())[:8]
-
     # 构建存储路径
     ext = os.path.splitext(file.filename)[1] or ".mp4"
     storage_path = f"raw/{device_id}/{timestamp}/{camera_view}{ext}"
@@ -73,13 +70,17 @@ async def upload_video(
     # 注意: minio-py 的 put_object 要求 data 是 file-like 对象（有 .read() 方法），
     # 不能直接传 bytes，需要包装为 BytesIO
     content = await file.read()
-    _minio_client.put_object(
+    result = _minio_client.put_object(
         MINIO_BUCKET_RAW,
         storage_path,
         data=io.BytesIO(content),
         length=len(content),
         content_type="video/mp4",
     )
+
+    # 使用 MinIO etag 前 8 位作为 video_id
+    # 与 list_videos 端点和 Celery 下载任务保持一致，确保全链路 video_id 可互认
+    video_id = result.etag[:8] if result.etag else str(uuid.uuid4())[:8]
 
     return VideoUploadResponse(
         video_id=video_id,
@@ -95,7 +96,7 @@ async def upload_video(
 @router.get("/", response_model=VideoListResponse)
 async def list_videos(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
     device_id: str = Query(None),
 ):
     """

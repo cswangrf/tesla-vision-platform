@@ -1,317 +1,292 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Table, Button, Space, Tag, Typography, message, Card,
-} from 'antd';
-import {
-  UploadOutlined, ReloadOutlined, PlayCircleOutlined,
-  DeleteOutlined, VideoCameraOutlined, UpOutlined, DownOutlined,
-} from '@ant-design/icons';
-import type { ColumnsType } from 'antd/es/table';
-import MultiViewPlayer, { VideoClip } from './MultiViewPlayer';
-import VideoUploadModal from './VideoUploadModal';
-import { getVideos, deleteVideo, VideoMetadata } from '../services/api';
+import { List, Typography, Button, Upload, message, Spin, Tag, Space, Tooltip } from 'antd';
+import { UploadOutlined, ReloadOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import type { UploadFile } from 'antd/es/upload/interface';
+import { getVideos, uploadVideo } from '../services/api';
+import type { VideoMetadata } from '../services/api';
+import MultiViewPlayer, { type VideoClip } from './MultiViewPlayer';
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
 
-// 将视频列表按 device_id + timestamp 分组成 VideoClip
-function groupVideosIntoClips(videos: VideoMetadata[]): Map<string, VideoClip> {
-  const clips = new Map<string, VideoClip>();
+// 视角标签映射
+const VIEW_LABELS: Record<string, string> = {
+  front: '前视',
+  back: '后视',
+  left_repeater: '左后',
+  right_repeater: '右后',
+};
 
-  videos.forEach((v) => {
-    // timestamp 可能是字符串或 Date，统一归一化为 YYYY-MM-DD_HH-MM-SS 格式
-    let ts: string;
-    if (typeof v.timestamp === 'string') {
-      ts = v.timestamp
-        .replace(/\.\d+/, '')      // strip microseconds (.816450)
-        .replace(/Z$/, '')          // strip trailing Z
-        .replace('T', '_')          // 2024-06-05_11:41:22
-        .replace(/:/g, '-')         // 2024-06-05_11-41-22
-        .slice(0, 19);
-    } else {
-      ts = new Date(v.timestamp).toISOString().replace(/T/, '_').replace(/:/g, '-').slice(0, 19);
-    }
+/**
+ * 将扁平的视频列表按 (device_id, timestamp) 聚合为 VideoClip。
+ */
+function groupVideosIntoClips(videos: VideoMetadata[]): VideoClip[] {
+  const clipMap = new Map<string, VideoClip>();
 
-    const key = `${v.device_id}__${ts}`;
-
-    if (!clips.has(key)) {
-      clips.set(key, {
+  for (const v of videos) {
+    const key = `${v.device_id}|${v.timestamp}`;
+    if (!clipMap.has(key)) {
+      clipMap.set(key, {
         device_id: v.device_id,
-        timestamp: ts,
+        timestamp: v.timestamp,
         views: {},
       });
     }
-    const clip = clips.get(key)!;
-    clip.views[v.camera_view] = v.video_id;
-  });
+    clipMap.get(key)!.views[v.camera_view] = v.video_id;
+  }
 
-  return clips;
+  // 按时间戳降序排列（最新的在前）
+  return Array.from(clipMap.values()).sort((a, b) =>
+    b.timestamp.localeCompare(a.timestamp)
+  );
 }
 
 const VideoBrowser: React.FC = () => {
-  const [videos, setVideos] = useState<VideoMetadata[]>([]);
+  const [clips, setClips] = useState<VideoClip[]>([]);
   const [loading, setLoading] = useState(false);
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [selectedClipKey, setSelectedClipKey] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  // 面板展开/折叠状态：有选中片段时默认折叠
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [selectedClip, setSelectedClip] = useState<VideoClip | null>(null);
+  const [uploading, setUploading] = useState(false);
 
-  const pageSize = 20;
-  const isPlaying = selectedClipKey !== null;
-
-  // 选中/取消播放时自动折叠/展开面板
-  useEffect(() => {
-    if (isPlaying) {
-      // 短暂延迟后自动折叠，让用户先看到播放器
-      const timer = setTimeout(() => setPanelCollapsed(true), 1500);
-      return () => clearTimeout(timer);
-    } else {
-      setPanelCollapsed(false);
-    }
-  }, [isPlaying, selectedClipKey]);
-
+  // 加载视频列表
   const fetchVideos = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getVideos(page, pageSize);
-      setVideos(data.videos);
-      setTotal(data.total);
-    } catch (err) {
-      message.error('获取视频列表失败');
+      const res = await getVideos(1, 500);
+      const grouped = groupVideosIntoClips(res.videos || []);
+      setClips(grouped);
+      // 自动选中第一个（如果当前无选中或选中的已不在列表中）
+      if (grouped.length > 0) {
+        setSelectedClip((prev) => {
+          if (!prev) return grouped[0];
+          const stillExists = grouped.some(
+            (c) => c.device_id === prev.device_id && c.timestamp === prev.timestamp
+          );
+          return stillExists ? prev : grouped[0];
+        });
+      } else {
+        setSelectedClip(null);
+      }
+    } catch (err: any) {
+      message.error('加载视频列表失败: ' + (err?.message || '网络错误'));
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, []);
 
   useEffect(() => {
     fetchVideos();
   }, [fetchVideos]);
 
-  const handleDelete = async (videoId: string) => {
-    try {
-      await deleteVideo(videoId);
-      message.success('视频已删除');
-      const clips = groupVideosIntoClips(videos);
-      for (const [key, clip] of clips) {
-        if (Object.values(clip.views).includes(videoId) && key === selectedClipKey) {
-          setSelectedClipKey(null);
-          break;
+  // 处理上传
+  const handleUpload = useCallback(
+    async (file: File) => {
+      // 从文件名推断 device_id / timestamp / camera_view
+      // Tesla 视频命名规范: {timestamp}_{camera_view}.mp4
+      // 若无法解析，使用默认值
+      const name = file.name.replace(/\.mp4$/i, '');
+      const parts = name.split('_');
+
+      let deviceId = 'unknown-device';
+      let timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      let cameraView = 'front';
+
+      if (parts.length >= 2) {
+        // 假设最后一部分是 camera_view
+        const lastPart = parts[parts.length - 1];
+        if (['front', 'back', 'left_repeater', 'right_repeater'].includes(lastPart)) {
+          cameraView = lastPart;
+          // 其余部分可能是时间戳
+          timestamp = parts.slice(0, -1).join('_');
+        } else {
+          // 尝试作为整体
+          timestamp = parts.join('_');
         }
       }
-      fetchVideos();
-    } catch {
-      message.error('删除失败');
-    }
-  };
 
-  const handleSelectClip = (key: string) => {
-    if (selectedClipKey === key) {
-      // 再次点击已选中的：停止播放
-      setSelectedClipKey(null);
-    } else {
-      setSelectedClipKey(key);
-    }
-  };
+      // 规范化时间戳格式
+      timestamp = timestamp.replace(/[:\s]/g, '-').replace(/\./g, '-');
 
-  const clips = groupVideosIntoClips(videos);
-  const selectedClip = selectedClipKey ? clips.get(selectedClipKey) || null : null;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('device_id', deviceId);
+      formData.append('timestamp', timestamp);
+      formData.append('camera_view', cameraView);
 
-  // 将 clips 转为表格数据
-  const clipList = Array.from(clips.entries()).map(([key, clip]) => ({
-    key,
-    ...clip,
-    viewCount: Object.keys(clip.views).length,
-  }));
+      try {
+        await uploadVideo(formData);
+        message.success(`上传成功: ${file.name}`);
+        fetchVideos(); // 刷新列表
+        return false; // 阻止 Upload 组件的默认上传行为
+      } catch (err: any) {
+        message.error(`上传失败: ${err?.message || '未知错误'}`);
+        return false;
+      }
+    },
+    [fetchVideos]
+  );
 
-  const columns: ColumnsType<typeof clipList[0]> = [
-    {
-      title: '设备 ID',
-      dataIndex: 'device_id',
-      key: 'device_id',
-      render: (text: string) => <Text code>{text}</Text>,
+  const customUpload = useCallback(
+    async (options: any) => {
+      setUploading(true);
+      try {
+        await handleUpload(options.file as File);
+        options.onSuccess?.({}, options.file);
+      } catch {
+        options.onError?.(new Error('upload failed'));
+      } finally {
+        setUploading(false);
+      }
     },
-    {
-      title: '时间戳',
-      dataIndex: 'timestamp',
-      key: 'timestamp',
-      render: (text: string) => <Text>{text.replace('_', ' ')}</Text>,
-    },
-    {
-      title: '视角数',
-      dataIndex: 'viewCount',
-      key: 'viewCount',
-      width: 80,
-      render: (count: number) => (
-        <Tag color={count >= 4 ? 'green' : 'orange'}>
-          {count}/4
-        </Tag>
-      ),
-    },
-    {
-      title: '可用视角',
-      key: 'views',
-      render: (_, record) => (
-        <Space size={4} wrap>
-          {Object.keys(record.views).map((view) => (
-            <Tag key={view} color="blue" style={{ margin: 0 }}>
-              {view.replace('_', ' ')}
-            </Tag>
-          ))}
-        </Space>
-      ),
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 200,
-      render: (_, record) => (
-        <Space>
-          <Button
-            type={selectedClipKey === record.key ? 'primary' : 'default'}
-            size="small"
-            icon={<PlayCircleOutlined />}
-            onClick={() => handleSelectClip(record.key)}
-          >
-            {selectedClipKey === record.key ? '播放中' : '播放'}
-          </Button>
-          <Button
-            size="small"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => {
-              Object.values(record.views).forEach((vid) => handleDelete(vid));
-            }}
-          >
-            删除
-          </Button>
-        </Space>
-      ),
-    },
-  ];
-
-  // 面板折叠时的拖拽手柄高度
-  const HANDLE_HEIGHT = 36;
+    [handleUpload]
+  );
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      overflow: 'hidden',
-      position: 'relative',
-    }}>
-      {/* 播放器区域 */}
-      <div style={{
-        flex: 1,
-        minHeight: 0,
-        overflow: 'hidden',
-      }}>
-        <MultiViewPlayer clip={selectedClip} />
-      </div>
-
-      {/* 视频列表面板 — 播放时自动折叠到底部 */}
-      <div style={{
-        position: 'relative',
-        flexShrink: 0,
-        height: panelCollapsed ? HANDLE_HEIGHT : 'auto',
-        maxHeight: panelCollapsed ? HANDLE_HEIGHT : '45%',
-        transition: 'height 0.35s cubic-bezier(0.4, 0, 0.2, 1), max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
-        overflow: 'hidden',
-      }}>
-        {/* 拖拽手柄 — 始终可见 */}
+    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+      {/* ======== 左侧面板：视频片段列表 ======== */}
+      <div
+        style={{
+          width: 300,
+          minWidth: 260,
+          borderRight: '1px solid #e8e8e8',
+          background: '#fafafa',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {/* 标题栏 */}
         <div
-          onClick={() => setPanelCollapsed(!panelCollapsed)}
           style={{
-            height: HANDLE_HEIGHT,
+            padding: '12px 16px',
+            borderBottom: '1px solid #e8e8e8',
+            background: '#fff',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            background: 'linear-gradient(180deg, #fafafa 0%, #f0f0f0 100%)',
-            borderTop: '1px solid #d9d9d9',
-            borderBottom: panelCollapsed ? '1px solid #d9d9d9' : 'none',
-            borderRadius: panelCollapsed ? '8px 8px 0 0' : 0,
-            cursor: 'pointer',
-            userSelect: 'none',
-            flexShrink: 0,
+            justifyContent: 'space-between',
           }}
-          title={panelCollapsed ? '点击展开视频列表' : '点击收起视频列表'}
         >
-          {panelCollapsed ? (
-            <Space size={4}>
-              <UpOutlined style={{ fontSize: 12, color: '#1890ff' }} />
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                视频列表
-              </Text>
-              <Tag color="blue" style={{ margin: 0, fontSize: 11, lineHeight: '16px' }}>
-                {total} 个文件
-              </Tag>
-              <UpOutlined style={{ fontSize: 12, color: '#1890ff' }} />
-            </Space>
-          ) : (
-            <DownOutlined style={{ fontSize: 12, color: '#999' }} />
-          )}
+          <Title level={5} style={{ margin: 0 }}>
+            视频片段
+          </Title>
+          <Tooltip title="刷新列表">
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={fetchVideos}
+              loading={loading}
+            />
+          </Tooltip>
         </div>
 
-        {/* 面板内容 */}
-        <Card
-          size="small"
-          style={{
-            border: 'none',
-            borderRadius: 0,
-            height: '100%',
-            overflow: 'auto',
-          }}
-          bodyStyle={{ padding: '8px 12px' }}
-          title={
-            <Space>
-              <VideoCameraOutlined />
-              <Text strong>视频列表</Text>
-              <Tag>{total} 个文件</Tag>
-            </Space>
-          }
-          extra={
-            <Space>
-              <Button
-                type="primary"
-                icon={<UploadOutlined />}
-                onClick={() => setUploadOpen(true)}
-              >
-                上传视频
-              </Button>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={fetchVideos}
-                loading={loading}
-              >
-                刷新
-              </Button>
-            </Space>
-          }
-        >
-          <Table
-            columns={columns}
-            dataSource={clipList}
-            loading={loading}
-            size="small"
-            pagination={{
-              current: page,
-              pageSize,
-              total,
-              onChange: (p) => setPage(p),
-              showSizeChanger: false,
-              showTotal: (t) => `共 ${t} 个片段`,
-            }}
-          />
-        </Card>
+        {/* 上传区域 */}
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e8e8e8', background: '#fff' }}>
+          <Upload
+            accept=".mp4,.avi,.mov,.mkv"
+            multiple
+            showUploadList={false}
+            customRequest={customUpload}
+          >
+            <Button
+              icon={<UploadOutlined />}
+              block
+              loading={uploading}
+            >
+              上传 Tesla 视频
+            </Button>
+          </Upload>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
+            支持同时上传多个视角，系统会自动按时间戳分组
+          </Text>
+        </div>
+
+        {/* 片段列表 */}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {loading && clips.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 40 }}>
+              <Spin tip="加载中..." />
+            </div>
+          ) : clips.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 40 }}>
+              <Text type="secondary">暂无视频，请先上传</Text>
+            </div>
+          ) : (
+            <List
+              dataSource={clips}
+              split={false}
+              renderItem={(clip) => {
+                const viewCount = Object.keys(clip.views).length;
+                const isActive =
+                  selectedClip?.device_id === clip.device_id &&
+                  selectedClip?.timestamp === clip.timestamp;
+
+                return (
+                  <List.Item
+                    onClick={() => setSelectedClip(clip)}
+                    style={{
+                      padding: '10px 16px',
+                      cursor: 'pointer',
+                      background: isActive ? '#e6f7ff' : 'transparent',
+                      borderLeft: isActive ? '3px solid #1890ff' : '3px solid transparent',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isActive)
+                        (e.currentTarget as HTMLElement).style.background = '#f5f5f5';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isActive)
+                        (e.currentTarget as HTMLElement).style.background = 'transparent';
+                    }}
+                  >
+                    <div style={{ width: '100%' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Space size={4}>
+                          <PlayCircleOutlined
+                            style={{ color: isActive ? '#1890ff' : '#999', fontSize: 16 }}
+                          />
+                          <Text
+                            strong
+                            style={{
+                              fontSize: 13,
+                              color: isActive ? '#1890ff' : undefined,
+                            }}
+                          >
+                            {clip.device_id}
+                          </Text>
+                        </Space>
+                        <Tag color={viewCount >= 4 ? 'green' : 'orange'}>
+                          {viewCount} 视角
+                        </Tag>
+                      </div>
+                      <Text
+                        type="secondary"
+                        style={{ fontSize: 11, display: 'block', marginTop: 2 }}
+                      >
+                        {clip.timestamp}
+                      </Text>
+                      <div style={{ marginTop: 4 }}>
+                        {['front', 'back', 'left_repeater', 'right_repeater'].map((view) => (
+                          <Tag
+                            key={view}
+                            color={clip.views[view] ? 'blue' : 'default'}
+                            style={{ fontSize: 10, marginBottom: 2 }}
+                          >
+                            {VIEW_LABELS[view] || view}
+                          </Tag>
+                        ))}
+                      </div>
+                    </div>
+                  </List.Item>
+                );
+              }}
+            />
+          )}
+        </div>
       </div>
 
-      {/* 上传弹窗 */}
-      <VideoUploadModal
-        open={uploadOpen}
-        onClose={() => setUploadOpen(false)}
-        onSuccess={fetchVideos}
-      />
+      {/* ======== 右侧主区域：多视角播放器 ======== */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <MultiViewPlayer clip={selectedClip} />
+      </div>
     </div>
   );
 };
