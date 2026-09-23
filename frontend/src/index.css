@@ -1,0 +1,6 @@
+/* video.js 的 .vjs-tech 默认拉伸铺满播放器盒子。
+   本项目播放器固定宽高（fill 模式），4:3 视频放进宽格子会被横向拉长，
+   这里用 contain 保持画面原始宽高比，不足部分显示黑边。 */
+.video-js .vjs-tech {
+  object-fit: contain;
+}

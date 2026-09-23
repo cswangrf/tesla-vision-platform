@@ -67,10 +67,9 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
       'video-player-main',
       {
         controls: true,
-        fluid: true,
+        fill: true,
         autoplay: false,
         preload: 'auto',
-        aspectRatio: '4:3',
         sources: src ? [{ src, type: 'video/mp4' }] : [],
       }
     );
@@ -96,10 +95,9 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
         `video-thumb-${view}`,
         {
           controls: false,  // 缩略图不显示控件
-          fluid: true,
+          fill: true,
           autoplay: false,
           preload: 'auto',
-          aspectRatio: '4:3',
           sources: src ? [{ src, type: 'video/mp4' }] : [],
         },
         () => {
