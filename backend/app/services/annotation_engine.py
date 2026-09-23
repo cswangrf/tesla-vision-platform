@@ -5,6 +5,7 @@ Tesla Vision Platform - 联合标注引擎客户端
 对每一帧图像进行全局语义标注和目标检测。
 """
 
+import json
 import httpx
 import asyncio
 import logging
@@ -42,7 +43,7 @@ class AnnotationClient:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{self.clip_url}/classify",
-                json={"candidates": candidates},
+                data={"candidates": json.dumps(candidates, ensure_ascii=False)},
                 files={"image": ("frame.jpg", image_bytes, "image/jpeg")}
             )
             resp.raise_for_status()
@@ -53,7 +54,7 @@ class AnnotationClient:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{self.lam_url}/detect",
-                json={"prompts": prompts},
+                data={"prompts": json.dumps(prompts, ensure_ascii=False)},
                 files={"image": ("frame.jpg", image_bytes, "image/jpeg")}
             )
             resp.raise_for_status()

@@ -11,13 +11,13 @@ Tesla Vision Platform - 标注推理微服务
 """
 
 import argparse
+import json
 import logging
 import os
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, UploadFile
-from pydantic import BaseModel
+from fastapi import FastAPI, File, Form, UploadFile
 
 from chinese_clip import ChineseClip
 from locate_anything import LocateAnything3B
@@ -30,12 +30,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-# ============================================================
-# 数据模型
-# ============================================================
-class ClassifyRequest(BaseModel):
-    candidates: list[str]
 
 # ============================================================
 # FastAPI 应用
@@ -110,35 +104,51 @@ async def embed(image: UploadFile = File(...)):
     return {"embedding": vec.tolist()}
 
 
+def _parse_list_field(value: str, field_name: str):
+    """把表单中的 JSON 字符串解析为列表，失败返回 None"""
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    logger.warning(f"字段 {field_name} 不是合法的 JSON 数组: {value!r}")
+    return None
+
+
 @app.post("/classify")
-async def classify(req: ClassifyRequest, image: UploadFile = File(...)):
+async def classify(image: UploadFile = File(...), candidates: str = Form(...)):
     """
     零样本图像分类 (Chinese-CLIP)。
 
     POST /classify
     Body: multipart/form-data
         - "image": JPEG/PNG 文件
-        - "candidates": JSON {"candidates": ["标签1", "标签2", ...]}
+        - "candidates": JSON 数组字符串，如 '["标签1", "标签2"]'
 
     Response: {"tags": [{"label": "标签1", "score": 0.85}, ...]}
     """
     if model_instance is None:
         return {"error": "模型未加载"}, 500
 
+    cands = _parse_list_field(candidates, "candidates")
+    if cands is None:
+        return {"error": "candidates 必须是 JSON 数组"}, 400
+
     img_bytes = await image.read()
-    tags = model_instance.zero_shot_classify(img_bytes, req.candidates)
+    tags = model_instance.zero_shot_classify(img_bytes, cands)
     return {"tags": tags}
 
 
 @app.post("/detect")
-async def detect(req: ClassifyRequest, image: UploadFile = File(...)):
+async def detect(image: UploadFile = File(...), prompts: str = Form(...)):
     """
     目标检测 (LocateAnything-3B / Grounding DINO)。
 
     POST /detect
     Body: multipart/form-data
         - "image": JPEG/PNG 文件
-        - "prompts": JSON {"candidates": ["车辆", "行人", ...]}  注: 复用 candidates 字段作为检测提示
+        - "prompts": JSON 数组字符串，如 '["车辆", "行人"]'
 
     Response: {
         "objects": [
@@ -150,8 +160,12 @@ async def detect(req: ClassifyRequest, image: UploadFile = File(...)):
     if model_instance is None:
         return {"error": "模型未加载"}, 500
 
+    prompts_list = _parse_list_field(prompts, "prompts")
+    if prompts_list is None:
+        return {"error": "prompts 必须是 JSON 数组"}, 400
+
     img_bytes = await image.read()
-    objects = model_instance.detect(img_bytes, req.candidates)
+    objects = model_instance.detect(img_bytes, prompts_list)
     return {"objects": objects}
 
 

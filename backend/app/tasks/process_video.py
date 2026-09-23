@@ -213,7 +213,10 @@ def _compute_quality(annotation: dict, blur_score: float) -> float:
 
 def _save_to_parquet(annotations: List[Dict[str, Any]], task_id: str) -> str:
     """
-    将标注结果保存为 Parquet 文件。
+    将标注结果保存为 Parquet 文件，并上传到 MinIO 数据湖桶。
+
+    API 服务从数据湖桶读取标注数据用于检索/统计（API 与 worker 容器不共享文件系统，
+    必须经 MinIO 中转）。
 
     Args:
         annotations: 标注记录列表
@@ -255,6 +258,20 @@ def _save_to_parquet(annotations: List[Dict[str, Any]], task_id: str) -> str:
     pq.write_table(table, parquet_path, compression="snappy")
 
     logger.info(f"保存 {len(records)} 条标注到 {parquet_path}")
+
+    # 上传到 MinIO 数据湖桶，供 API 服务检索使用
+    try:
+        if not _minio_client.bucket_exists(MINIO_BUCKET_LAKE):
+            _minio_client.make_bucket(MINIO_BUCKET_LAKE)
+        lake_object = f"annotations/{task_id}/frame_annotations.parquet"
+        _minio_client.fput_object(
+            MINIO_BUCKET_LAKE, lake_object, parquet_path,
+            content_type="application/octet-stream",
+        )
+        logger.info(f"标注已上传到数据湖: {MINIO_BUCKET_LAKE}/{lake_object}")
+    except S3Error as e:
+        logger.error(f"上传标注到数据湖失败: {e}")
+
     return parquet_path
 
 

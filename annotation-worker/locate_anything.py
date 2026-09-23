@@ -12,13 +12,14 @@ Tesla Vision Platform - LocateAnything-3B 推理模块
 - 可选 Florence-2 微调版本 (需要单独下载权重)
 """
 
+import io
 import logging
+import re
 from typing import List, Dict, Any
 
 import numpy as np
 import torch
 from PIL import Image
-import io
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,39 @@ class LocateAnything3B:
         except Exception as e:
             logger.error(f"加载目标检测模型失败: {e}")
             # 不抛出异常，允许降级运行
+
+    def _match_label_to_prompt(self, label: str, prompts: List[str]) -> str:
+        """
+        把 Grounding DINO 返回的标签映射回最接近的提示词。
+
+        中文提示词会被 BERT 分词器拆成子词，post_process 返回的 label 可能是
+        碎片（如 "行 人"、"[UNK] 志"）。按去除空格/[UNK] 后的字符集合重合度
+        （Jaccard 相似度）选择最接近的提示词。
+        """
+        def norm(s: str) -> str:
+            return re.sub(r'\s+', '', s.replace('[UNK]', ''))
+
+        label_norm = norm(label)
+        if not label_norm:
+            return "未知目标"
+
+        best_prompt, best_score = "未知目标", 0.0
+        for p in prompts:
+            p_norm = norm(p)
+            if not p_norm:
+                continue
+            # 包含关系视为完全匹配
+            if label_norm in p_norm or p_norm in label_norm:
+                score = 1.0
+            else:
+                inter = set(label_norm) & set(p_norm)
+                union = set(label_norm) | set(p_norm)
+                score = len(inter) / len(union) if union else 0.0
+            if score > best_score:
+                best_prompt, best_score = p, score
+
+        # 重合度过低时归为未知目标，避免错误归类
+        return best_prompt if best_score >= 0.2 else "未知目标"
 
     def detect(
         self,
@@ -146,7 +180,7 @@ class LocateAnything3B:
                         "width": float(x2 - x1),
                         "height": float(y2 - y1),
                     },
-                    "class_name": label,
+                    "class_name": self._match_label_to_prompt(label, prompts),
                     "confidence": float(score),
                     "attributes": {},
                 })
