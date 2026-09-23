@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Input, Button, Card, Space, Typography, Spin, Tag, List, message } from 'antd';
+import { Input, Button, Card, Space, Typography, Spin, Tag, message } from 'antd';
 import { SendOutlined, RobotOutlined, UserOutlined } from '@ant-design/icons';
 import { chatQuery, ChatResponse, ChatMessage } from '../services/api';
 
@@ -135,36 +135,49 @@ const ChatPanel: React.FC = () => {
                 {msg.content}
               </Paragraph>
 
-              {/* 视频搜索结果 */}
+              {/* 检索结果：目标/场景分布统计 */}
               {msg.videos && msg.videos.length > 0 && (
                 <div style={{ marginTop: 12 }}>
-                  <Text type="secondary">
-                    找到 {msg.videos.length} 个相关视频片段：
-                  </Text>
-                  <List
-                    size="small"
-                    dataSource={msg.videos}
-                    style={{ marginTop: 8 }}
-                    renderItem={(video) => (
-                      <List.Item>
-                        <Space direction="vertical" size={0}>
-                          <Text strong>Video: {video.video_id}</Text>
-                          <Text type="secondary">
-                            Timestamp: {video.timestamp_sec.toFixed(1)}s |
-                            Score: {video.score.toFixed(2)}
-                          </Text>
-                          <Space>
-                            {video.matched_tags.map((tag) => (
-                              <Tag key={tag} color="blue">{tag}</Tag>
-                            ))}
-                            {video.matched_objects.map((obj) => (
-                              <Tag key={obj} color="green">{obj}</Tag>
-                            ))}
-                          </Space>
-                        </Space>
-                      </List.Item>
-                    )}
-                  />
+                  {msg.videos.map((result, idx) => (
+                    <div
+                      key={idx}
+                      style={{ marginBottom: idx < msg.videos!.length - 1 ? 12 : 0 }}
+                    >
+                      {result.object_distribution &&
+                        Object.keys(result.object_distribution).length > 0 && (
+                          <>
+                            <Text type="secondary">检测目标分布：</Text>
+                            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {Object.entries(result.object_distribution).map(([name, count]) => (
+                                <Tag key={name} color="green" style={{ margin: 0 }}>
+                                  {name} ×{count}
+                                </Tag>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      {result.tag_distribution &&
+                        Object.keys(result.tag_distribution).length > 0 && (
+                          <>
+                            <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+                              场景标签分布：
+                            </Text>
+                            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {Object.entries(result.tag_distribution).map(([name, count]) => (
+                                <Tag key={name} color="blue" style={{ margin: 0 }}>
+                                  {name} ×{count}
+                                </Tag>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      {result.matched_videos && result.matched_videos.length > 0 && (
+                        <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+                          匹配 {result.matched_frames} 帧 / {result.matched_videos.length} 个视频
+                        </Text>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </Card>

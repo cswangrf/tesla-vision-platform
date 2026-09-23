@@ -27,13 +27,19 @@ export interface ChatMessage {
   content: string;
 }
 
+// 检索结果：标注数据聚合统计（与后端 spark_client.search 的返回结构一致）
 export interface VideoSearchResult {
-  video_id: string;
-  timestamp_sec: number;
-  score: number;
-  matched_tags: string[];
-  matched_objects: string[];
-  thumbnail_url?: string;
+  total_frames: number;
+  matched_frames: number;
+  time_range?: string | null;
+  object_distribution: Record<string, number>;
+  tag_distribution: Record<string, number>;
+  matched_videos: Array<{
+    video_id: string;
+    date: string;
+    uploaded_date: string;
+    matched_frames: number;
+  }>;
 }
 
 export interface ChatResponse {
