@@ -62,11 +62,21 @@ const ChatPanel: React.FC = () => {
         ...newHistory,
         { role: 'assistant', content: response.reply },
       ]);
-    } catch (error) {
-      message.error('对话请求失败，请检查后端服务是否正常运行');
+    } catch (error: any) {
+      const isTimeout = error?.code === 'ECONNABORTED';
+      message.error(
+        isTimeout
+          ? '请求超时（模型在 CPU 上推理较慢），请稍后重试'
+          : '对话请求失败，请检查后端服务是否正常运行',
+      );
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: '抱歉，请求失败了。请检查后端服务。' },
+        {
+          role: 'assistant',
+          content: isTimeout
+            ? '抱歉，请求超时了。模型推理较慢，请稍后再试。'
+            : '抱歉，请求失败了。请检查后端服务。',
+        },
       ]);
     } finally {
       setLoading(false);

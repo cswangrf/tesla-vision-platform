@@ -34,6 +34,10 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
   const mainPlayerRef = useRef<any>(null);
   const [mainView, setMainView] = useState<string>('front');
   const [isReady, setIsReady] = useState(false);
+  // React 只管理容器 div；<video> 元素由 video.js 动态创建/销毁，
+  // 避免 video.js dispose 时移除 React 持有的 DOM 节点导致 removeChild 冲突
+  const mainContainerRef = useRef<HTMLDivElement | null>(null);
+  const thumbContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // 销毁所有播放器
   const disposeAll = useCallback(() => {
@@ -50,39 +54,42 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
     setIsReady(false);
   }, []);
 
-  // 初始化主视频播放器
+  // 初始化主视频播放器：动态创建 <video> 元素挂到容器中
   const initMainPlayer = useCallback((view: string) => {
-    const el = document.getElementById('video-player-main');
-    if (!el || !clip) return;
+    const container = mainContainerRef.current;
+    if (!container || !clip) return;
 
     if (mainPlayerRef.current) {
       mainPlayerRef.current.dispose();
       mainPlayerRef.current = null;
     }
 
+    const el = document.createElement('video');
+    el.className = 'video-js vjs-default-skin';
+    el.style.width = '100%';
+    el.style.height = '100%';
+    container.replaceChildren(el);
+
     const videoId = clip.views[view];
     const src = videoId ? getVideoStreamUrl(videoId) : '';
 
-    mainPlayerRef.current = videojs(
-      'video-player-main',
-      {
-        controls: true,
-        fill: true,
-        autoplay: false,
-        preload: 'auto',
-        sources: src ? [{ src, type: 'video/mp4' }] : [],
-      }
-    );
+    mainPlayerRef.current = videojs(el, {
+      controls: true,
+      fill: true,
+      autoplay: false,
+      preload: 'auto',
+      sources: src ? [{ src, type: 'video/mp4' }] : [],
+    });
   }, [clip]);
 
-  // 初始化 4 个缩略视频播放器
+  // 初始化 4 个缩略视频播放器（同样动态创建 <video> 元素）
   const initThumbPlayers = useCallback(() => {
     if (!clip) return;
 
     let loadedCount = 0;
     VIEWS.forEach((view) => {
-      const el = document.getElementById(`video-thumb-${view}`);
-      if (!el) return;
+      const container = thumbContainerRefs.current[view];
+      if (!container) return;
 
       if (thumbPlayersRef.current[view]) {
         thumbPlayersRef.current[view].dispose();
@@ -91,8 +98,14 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
       const videoId = clip.views[view];
       const src = videoId ? getVideoStreamUrl(videoId) : '';
 
+      const el = document.createElement('video');
+      el.className = 'video-js vjs-default-skin';
+      el.style.width = '100%';
+      el.style.height = '100%';
+      container.replaceChildren(el);
+
       const player = videojs(
-        `video-thumb-${view}`,
+        el,
         {
           controls: false,  // 缩略图不显示控件
           fill: true,
@@ -112,29 +125,28 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
     });
   }, [clip]);
 
+  // 剪辑变化：销毁旧播放器（video.js 会自行清理它创建的 <video> 元素），
+  // 并在容器中重新创建全部播放器
   useEffect(() => {
-    disposeAll();
+    if (!clip) return;
 
-    if (clip) {
-      // 先初始化缩略图播放器，再初始化主播放器
-      const timer = setTimeout(() => {
-        initThumbPlayers();
-        initMainPlayer(mainView);
-      }, 100);
+    initThumbPlayers();
+    initMainPlayer(mainView);
 
-      return () => {
-        clearTimeout(timer);
-        disposeAll();
-      };
-    }
+    return () => {
+      disposeAll();
+    };
   }, [clip]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 切换主视图时重建主播放器
+  // 切换主视图：重建主播放器（首次初始化已由上面的 effect 完成，避免重复初始化）
+  const prevMainViewRef = useRef(mainView);
   useEffect(() => {
-    if (clip && isReady) {
+    if (!clip) return;
+    if (prevMainViewRef.current !== mainView) {
       initMainPlayer(mainView);
     }
-  }, [mainView]); // eslint-disable-line react-hooks/exhaustive-deps
+    prevMainViewRef.current = mainView;
+  }, [mainView, clip]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 同步播放：主播放器控制所有缩略播放器
   useEffect(() => {
@@ -257,9 +269,8 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
         }}>
           {VIEW_LABELS[mainView] || mainView}
         </div>
-        <video
-          id="video-player-main"
-          className="video-js vjs-default-skin"
+        <div
+          ref={(el) => { mainContainerRef.current = el; }}
           style={{ width: '100%', height: '100%' }}
         />
       </div>
@@ -307,9 +318,8 @@ const MultiViewPlayer: React.FC<MultiViewPlayerProps> = ({ clip }) => {
                 {VIEW_LABELS[view] || view}
                 {isActive ? ' ✓' : ''}
               </div>
-              <video
-                id={`video-thumb-${view}`}
-                className="video-js vjs-default-skin"
+              <div
+                ref={(el) => { thumbContainerRefs.current[view] = el; }}
                 style={{ width: '100%', height: '100%' }}
               />
             </div>

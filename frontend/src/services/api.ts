@@ -80,10 +80,12 @@ export async function chatQuery(
   message: string,
   history: ChatMessage[] = [],
 ): Promise<ChatResponse> {
-  const response = await apiClient.post<ChatResponse>('/chat/query', {
-    message,
-    history,
-  });
+  // LLM 在 CPU 上推理较慢（可能 30s+），单独放宽超时；nginx 侧限制为 600s
+  const response = await apiClient.post<ChatResponse>(
+    '/chat/query',
+    { message, history },
+    { timeout: 300000 },
+  );
   return response.data;
 }
 
@@ -93,7 +95,10 @@ export async function chatQuery(
 export async function uploadVideo(
   formData: FormData,
 ): Promise<{ video_id: string; filename: string }> {
-  const response = await apiClient.post('/videos/upload', formData);
+  // 视频文件可达数 GB，上传耗时远超默认 30s
+  const response = await apiClient.post('/videos/upload', formData, {
+    timeout: 600000,
+  });
   return response.data;
 }
 

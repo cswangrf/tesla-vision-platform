@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { List, Typography, Button, Upload, message, Spin, Tag, Space, Tooltip } from 'antd';
-import { UploadOutlined, ReloadOutlined, PlayCircleOutlined } from '@ant-design/icons';
-import type { UploadFile } from 'antd/es/upload/interface';
-import { getVideos, uploadVideo } from '../services/api';
+import { List, Typography, Button, message, Spin, Tag, Space, Tooltip, Popconfirm } from 'antd';
+import { UploadOutlined, ReloadOutlined, PlayCircleOutlined, DeleteOutlined } from '@ant-design/icons';
+import { getVideos, deleteVideo } from '../services/api';
 import type { VideoMetadata } from '../services/api';
 import MultiViewPlayer, { type VideoClip } from './MultiViewPlayer';
+import VideoUploadModal from './VideoUploadModal';
 
 const { Text, Title } = Typography;
 
@@ -44,7 +44,7 @@ const VideoBrowser: React.FC = () => {
   const [clips, setClips] = useState<VideoClip[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedClip, setSelectedClip] = useState<VideoClip | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   // 加载视频列表
   const fetchVideos = useCallback(async () => {
@@ -76,67 +76,30 @@ const VideoBrowser: React.FC = () => {
     fetchVideos();
   }, [fetchVideos]);
 
-  // 处理上传
-  const handleUpload = useCallback(
-    async (file: File) => {
-      // 从文件名推断 device_id / timestamp / camera_view
-      // Tesla 视频命名规范: {timestamp}_{camera_view}.mp4
-      // 若无法解析，使用默认值
-      const name = file.name.replace(/\.mp4$/i, '');
-      const parts = name.split('_');
-
-      let deviceId = 'unknown-device';
-      let timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      let cameraView = 'front';
-
-      if (parts.length >= 2) {
-        // 假设最后一部分是 camera_view
-        const lastPart = parts[parts.length - 1];
-        if (['front', 'back', 'left_repeater', 'right_repeater'].includes(lastPart)) {
-          cameraView = lastPart;
-          // 其余部分可能是时间戳
-          timestamp = parts.slice(0, -1).join('_');
-        } else {
-          // 尝试作为整体
-          timestamp = parts.join('_');
-        }
-      }
-
-      // 规范化时间戳格式
-      timestamp = timestamp.replace(/[:\s]/g, '-').replace(/\./g, '-');
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('device_id', deviceId);
-      formData.append('timestamp', timestamp);
-      formData.append('camera_view', cameraView);
-
+  // 删除片段（含该片段全部视角的视频文件）
+  const handleDeleteClip = useCallback(
+    async (clip: VideoClip) => {
+      const videoIds = Object.values(clip.views);
       try {
-        await uploadVideo(formData);
-        message.success(`上传成功: ${file.name}`);
-        fetchVideos(); // 刷新列表
-        return false; // 阻止 Upload 组件的默认上传行为
+        await Promise.all(videoIds.map((id) => deleteVideo(id)));
+        message.success(`已删除片段 ${clip.device_id}（${videoIds.length} 个视角）`);
+        // 若删除的是当前播放的片段，清除选中状态
+        setSelectedClip((prev) => {
+          if (
+            prev &&
+            prev.device_id === clip.device_id &&
+            prev.timestamp === clip.timestamp
+          ) {
+            return null;
+          }
+          return prev;
+        });
+        fetchVideos();
       } catch (err: any) {
-        message.error(`上传失败: ${err?.message || '未知错误'}`);
-        return false;
+        message.error(`删除失败: ${err?.message || '未知错误'}`);
       }
     },
     [fetchVideos]
-  );
-
-  const customUpload = useCallback(
-    async (options: any) => {
-      setUploading(true);
-      try {
-        await handleUpload(options.file as File);
-        options.onSuccess?.({}, options.file);
-      } catch {
-        options.onError?.(new Error('upload failed'));
-      } finally {
-        setUploading(false);
-      }
-    },
-    [handleUpload]
   );
 
   return (
@@ -179,20 +142,13 @@ const VideoBrowser: React.FC = () => {
 
         {/* 上传区域 */}
         <div style={{ padding: '12px 16px', borderBottom: '1px solid #e8e8e8', background: '#fff' }}>
-          <Upload
-            accept=".mp4,.avi,.mov,.mkv"
-            multiple
-            showUploadList={false}
-            customRequest={customUpload}
+          <Button
+            icon={<UploadOutlined />}
+            block
+            onClick={() => setUploadOpen(true)}
           >
-            <Button
-              icon={<UploadOutlined />}
-              block
-              loading={uploading}
-            >
-              上传 Tesla 视频
-            </Button>
-          </Upload>
+            上传 Tesla 视频
+          </Button>
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
             支持同时上传多个视角，系统会自动按时间戳分组
           </Text>
@@ -253,9 +209,28 @@ const VideoBrowser: React.FC = () => {
                             {clip.device_id}
                           </Text>
                         </Space>
-                        <Tag color={viewCount >= 4 ? 'green' : 'orange'}>
-                          {viewCount} 视角
-                        </Tag>
+                        <Space size={4}>
+                          <Tag color={viewCount >= 4 ? 'green' : 'orange'}>
+                            {viewCount} 视角
+                          </Tag>
+                          <Popconfirm
+                            title="删除该片段？"
+                            description={`将删除 ${viewCount} 个视角的视频文件，不可恢复`}
+                            okText="删除"
+                            cancelText="取消"
+                            okButtonProps={{ danger: true }}
+                            onConfirm={() => handleDeleteClip(clip)}
+                          >
+                            <Button
+                              size="small"
+                              type="text"
+                              danger
+                              icon={<DeleteOutlined />}
+                              onClick={(e) => e.stopPropagation()}
+                              title="删除片段"
+                            />
+                          </Popconfirm>
+                        </Space>
                       </div>
                       <Text
                         type="secondary"
@@ -287,6 +262,13 @@ const VideoBrowser: React.FC = () => {
       <div style={{ flex: 1, minWidth: 0 }}>
         <MultiViewPlayer clip={selectedClip} />
       </div>
+
+      {/* 上传弹窗 */}
+      <VideoUploadModal
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onSuccess={fetchVideos}
+      />
     </div>
   );
 };

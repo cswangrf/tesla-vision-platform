@@ -36,6 +36,24 @@ def _ensure_bucket():
         _minio_client.make_bucket(MINIO_BUCKET_RAW)
 
 
+def _parse_timestamp(ts: str) -> datetime:
+    """解析目录名中的时间戳，支持常见格式；统一截断到秒（微秒清零），
+    保证同一秒上传的 4 个视角在列表里归为一组。失败时返回当前时间。"""
+    formats = (
+        "%Y-%m-%d_%H-%M-%S",
+        "%Y-%m-%dT%H-%M-%S",
+        "%Y-%m-%d %H-%M-%S",
+        "%Y-%m-%d_%H-%M-%S-%f",
+        "%Y-%m-%dT%H-%M-%S.%f",
+    )
+    for fmt in formats:
+        try:
+            return datetime.strptime(ts, fmt).replace(microsecond=0)
+        except ValueError:
+            continue
+    return datetime.now()
+
+
 def _get_video_metadata(object_name: str) -> dict:
     """从 MinIO 获取视频对象元数据"""
     try:
@@ -121,11 +139,8 @@ async def list_videos(
         if device_id and obj_device_id != device_id:
             continue
 
-        # 解析路径中的时间戳: 格式 YYYY-MM-DD_HH-MM-SS
-        try:
-            parsed_ts = datetime.strptime(obj_timestamp, "%Y-%m-%d_%H-%M-%S")
-        except ValueError:
-            parsed_ts = datetime.now()
+        # 解析路径中的时间戳（多格式，秒级归组）
+        parsed_ts = _parse_timestamp(obj_timestamp)
 
         videos.append(VideoMetadata(
             video_id=obj.etag[:8] if obj.etag else str(uuid.uuid4())[:8],

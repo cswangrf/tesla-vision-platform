@@ -108,10 +108,13 @@ class OllamaClient:
         """
         messages = history or []
         # 将工具结果格式化为 system 上下文
-        context = "根据以下搜索结果回答用户问题:\n"
-        for i, result in enumerate(tool_results):
-            context += f"\n结果 {i+1}:\n"
-            context += json.dumps(result, ensure_ascii=False, indent=2)
+        if tool_results:
+            context = "根据以下搜索结果回答用户问题:\n"
+            for i, result in enumerate(tool_results):
+                context += f"\n结果 {i+1}:\n"
+                context += json.dumps(result, ensure_ascii=False, indent=2)
+        else:
+            context = "搜索结果为空，没有找到与用户问题匹配的数据。请直接告诉用户没有找到相关数据，并建议调整查询条件。"
 
         messages.append({"role": "system", "content": context})
 

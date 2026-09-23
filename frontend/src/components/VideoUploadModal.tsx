@@ -32,18 +32,40 @@ interface VideoUploadModalProps {
 }
 
 /**
- * 从文件名中尝试解析时间戳。
- * 支持格式: YYYY-MM-DD_HH-MM-SS 或 YYYYMMDD_HHMMSS
- * 例如: "2025-01-15_18-30-00-front.mp4" → "2025-01-15_18-30-00"
+ * 从文件名中解析 device_id 和时间戳。
+ * 命名规范: [device_id_]YYYY-MM-DD_HH-MM-SS[-微秒]_camera_view.mp4
+ * 时间戳统一规范化为 YYYY-MM-DD_HH-MM-SS（秒级），同一秒的 4 个视角归为一组。
  */
-function parseTimestampFromFilename(filename: string): string | null {
-  // 匹配 YYYY-MM-DD_HH-MM-SS
-  const match1 = filename.match(/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/);
-  if (match1) return match1[1];
-  // 匹配 YYYYMMDD_HHMMSS
-  const match2 = filename.match(/(\d{8}_\d{6})/);
-  if (match2) return match2[1];
-  return null;
+function parseFilename(filename: string): { deviceId: string | null; timestamp: string | null } {
+  const name = filename.replace(/\.(mp4|avi|mov|mkv)$/i, '');
+
+  // 时间戳：日期（YYYY-MM-DD 或 YYYYMMDD）+ 时分秒，容忍 _/空格/T 作日期分隔、
+  // -:./ 作时间分隔，微秒截断
+  let match = name.match(
+    /(\d{4}-\d{2}-\d{2})[_\sT](\d{2})[-:.](\d{2})[-:.](\d{2})(?:[-.]\d{3,6})?/
+  );
+  let timestamp: string | null = null;
+  let index = -1;
+  if (match) {
+    timestamp = `${match[1]}_${match[2]}-${match[3]}-${match[4]}`;
+    index = match.index ?? -1;
+  } else {
+    const compact = name.match(
+      /(\d{4})(\d{2})(\d{2})[_\sT](\d{2})[-:.](\d{2})[-:.](\d{2})(?:[-.]\d{3,6})?/
+    );
+    if (compact) {
+      timestamp = `${compact[1]}-${compact[2]}-${compact[3]}_${compact[4]}-${compact[5]}-${compact[6]}`;
+      index = compact.index ?? -1;
+    }
+  }
+
+  // device_id：时间戳之前的部分；缺失时返回 null（表单保持默认值）
+  let deviceId: string | null = null;
+  if (index > 0) {
+    const prefix = name.slice(0, index).replace(/[-_\s.]+$/, '');
+    if (prefix) deviceId = prefix;
+  }
+  return { deviceId, timestamp };
 }
 
 /**
@@ -86,11 +108,16 @@ const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
 
     setUploadItems((prev) => [...prev, ...newItems]);
 
-    // 从第一个文件名中尝试提取时间戳并自动填入表单
+    // 从第一个文件名自动预填时间戳 / 设备 ID
+    // （时间戳仅在为空时填入；设备 ID 仅在未手动修改过默认值时填入）
     if (files.length > 0) {
-      const ts = parseTimestampFromFilename(files[0].name);
-      if (ts && !form.getFieldValue('timestamp')) {
-        form.setFieldsValue({ timestamp: ts });
+      const { deviceId, timestamp } = parseFilename(files[0].name);
+      if (timestamp && !form.getFieldValue('timestamp')) {
+        form.setFieldsValue({ timestamp });
+      }
+      const currentDevice = form.getFieldValue('device_id');
+      if (deviceId && (!currentDevice || currentDevice === DEFAULT_DEVICE_ID)) {
+        form.setFieldsValue({ device_id: deviceId });
       }
     }
   }, [form]);
