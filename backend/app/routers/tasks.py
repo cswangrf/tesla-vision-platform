@@ -13,11 +13,11 @@ from app.models.schemas import (
 )
 from app.tasks.celery_app import celery_app
 from app.tasks.process_video import process_video_task
+from app.tasks.task_store import (
+    create_task, get_task, list_tasks as list_stored_tasks, update_task,
+)
 
 router = APIRouter()
-
-# 任务状态内存存储（生产环境应使用 Redis/DB）
-_task_store: dict[str, TaskResponse] = {}
 
 
 @router.post("/process", response_model=TaskResponse)
@@ -36,10 +36,13 @@ async def create_processing_task(req: TaskCreateRequest):
         created_at=datetime.now(),
         updated_at=datetime.now(),
     )
-    _task_store[task_id] = task_response
 
-    # 提交 Celery 异步任务
+    # 任务状态经 Redis 共享存储（API 与 Celery worker 为独立进程/容器）
+    create_task(task_id, task_response.model_dump(mode="json"))
+
+    # 提交 Celery 异步任务，并记录 Celery 任务 ID（撤销任务时需要）
     celery_task = process_video_task.delay(task_id, req.video_ids)
+    update_task(task_id, celery_task_id=celery_task.id)
 
     return task_response
 
@@ -49,10 +52,10 @@ async def get_task_status(task_id: str):
     """
     查询任务状态和进度。
     """
-    task = _task_store.get(task_id)
-    if not task:
+    data = get_task(task_id)
+    if not data:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return task
+    return TaskResponse.model_validate(data)
 
 
 @router.get("/", response_model=list[TaskResponse])
@@ -63,7 +66,7 @@ async def list_tasks(
     """
     列出所有任务。
     """
-    tasks = list(_task_store.values())
+    tasks = [TaskResponse.model_validate(data) for data in list_stored_tasks()]
     if status:
         tasks = [t for t in tasks if t.status == status]
 
@@ -77,18 +80,19 @@ async def cancel_task(task_id: str):
     """
     取消正在执行的任务。
     """
-    task = _task_store.get(task_id)
-    if not task:
+    data = get_task(task_id)
+    if not data:
         raise HTTPException(status_code=404, detail="任务不存在")
 
+    task = TaskResponse.model_validate(data)
     if task.status not in (TaskStatus.PENDING, TaskStatus.PROCESSING):
         raise HTTPException(status_code=400, detail="任务已完成或已失败，无法取消")
 
-    # 尝试撤销 Celery 任务
-    celery_app.control.revoke(task_id, terminate=True)
+    # 撤销 Celery 任务：须传 Celery 任务 ID（业务 task_id 不是 Celery ID）
+    celery_task_id = data.get("celery_task_id")
+    if celery_task_id:
+        celery_app.control.revoke(celery_task_id, terminate=True)
 
-    task.status = TaskStatus.FAILED
-    task.error = "用户取消"
-    task.updated_at = datetime.now()
+    update_task(task_id, status=TaskStatus.FAILED.value, error="用户取消")
 
     return {"task_id": task_id, "status": "cancelled"}

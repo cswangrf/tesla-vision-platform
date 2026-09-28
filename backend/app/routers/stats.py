@@ -13,7 +13,7 @@ from app.config import (
     MINIO_BUCKET_RAW, MINIO_SECURE,
 )
 from app.services.spark_client import SparkQueryClient
-from app.routers.tasks import _task_store
+from app.tasks.task_store import list_tasks as list_stored_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def stats_summary() -> Dict[str, Any]:
     看板汇总数据：
     - videos: 原始视频概况（文件数、片段数、设备列表、总大小）
     - annotations: 标注统计（帧数、目标分布、场景标签分布、已标注视频）
-    - tasks: 任务数量（当前 API 进程内提交的任务）
+    - tasks: 任务数量（Redis 共享存储中的任务，含 worker 侧状态更新）
     """
     # ---- 视频概况（MinIO raw 桶） ----
     total_files = 0
@@ -61,10 +61,10 @@ async def stats_summary() -> Dict[str, Any]:
     annotation_stats = search_results[0] if search_results else {}
 
     # ---- 任务概况 ----
-    tasks = list(_task_store.values())
+    tasks = list_stored_tasks()
     task_counts: Dict[str, int] = {}
     for t in tasks:
-        key = t.status.value if hasattr(t.status, "value") else str(t.status)
+        key = t.get("status", "unknown")
         task_counts[key] = task_counts.get(key, 0) + 1
 
     return {

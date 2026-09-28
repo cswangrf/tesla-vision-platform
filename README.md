@@ -2,7 +2,7 @@
 
 > 自动驾驶视频智能标注与检索平台
 
-基于多模态大模型的 Tesla 多视角视频标注、管理、智能问答一体化平台。支持视频上传、多视角同步播放、Chinese-CLIP + Grounding DINO 联合标注、自然语言检索和 Spark 大规模数据处理。
+基于多模态大模型的 Tesla 多视角视频标注、管理、智能问答一体化平台。支持视频上传、多视角同步播放、Chinese-CLIP + Grounding DINO 联合标注、自然语言检索和 Parquet 数据湖分析。
 
 ---
 
@@ -29,7 +29,7 @@
 │                    前端展示层 (React)                      │
 │  视频同步播放器 | 智能问答界面 | 视频上传管理 | 数据看板   │
 └──────────────────────┬───────────────────────────────────┘
-                       │ HTTP/WebSocket
+                       │ HTTP
 ┌──────────────────────┴───────────────────────────────────┐
 │                     API 网关层 (FastAPI)                    │
 │  视频上传/流式传输 | 任务调度 | 对话管理 | 视频检索        │
@@ -38,9 +38,9 @@
 ┌──────────────────────┴───────────────────────────────────┐
 │                    智能处理服务层                           │
 │  ┌────────────────┐ ┌───────────────┐ ┌───────────────┐  │
-│  │ 联合标注引擎    │ │ 对话推理服务   │ │ 数据筛选服务   │  │
-│  │ Chinese-CLIP +  │ │ Ollama        │ │ Spark +       │  │
-│  │ Grounding DINO  │ │ Qwen2.5:7B    │ │ Parquet       │  │
+│  │ 联合标注引擎    │ │ 对话推理服务   │ │ 数据湖检索     │  │
+│  │ Chinese-CLIP +  │ │ Ollama        │ │ pyarrow 直读   │  │
+│  │ Grounding DINO  │ │ Qwen2.5:7B    │ │ MinIO Parquet  │  │
 │  └────────────────┘ └───────────────┘ └───────────────┘  │
 └──────────────────────┬───────────────────────────────────┘
                        │
@@ -56,7 +56,7 @@
 
 - **前端展示层**：React + TypeScript，提供多视角视频播放器、智能问答、视频上传管理
 - **API 网关层**：FastAPI 后端，统一接入视频上传/流式传输、任务管理、对话接口
-- **智能处理服务层**：GPU 推理服务（Chinese-CLIP + Grounding DINO）、Ollama LLM、Spark 数据处理
+- **智能处理服务层**：GPU 推理服务（Chinese-CLIP + Grounding DINO）、Ollama LLM、数据湖检索（pyarrow 直读 MinIO Parquet）
 - **数据湖存储层**：MinIO 对象存储（视频文件）、Parquet 格式标注数据湖
 
 ---
@@ -73,7 +73,7 @@
 | **大模型**   | Ollama + Qwen2.5:7B                       | 对话推理，支持 Function Calling   |
 | **语义理解** | Chinese-CLIP (ViT-L-14)                   | 全局语义向量提取 + 零样本场景分类 |
 | **目标检测** | Grounding DINO                            | 开放词汇细粒度目标检测            |
-| **数据处理** | PySpark + Delta Lake + Parquet            | 大规模标注数据清洗与聚合          |
+| **数据处理** | PySpark（离线脚本）+ Parquet              | 标注数据清洗与聚合（脚本独立提交）    |
 | **部署**     | Docker Compose + NVIDIA Container Toolkit | 一键编排启动                      |
 | **GPU 框架** | PyTorch 2.4 + CUDA 12.1                   | 模型推理加速                      |
 
@@ -86,35 +86,35 @@
 - **拖拽/批量上传**：支持同时上传 Tesla 四视角视频（front / back / left_repeater / right_repeater）
 - **目录结构保留**：自动按 `{device_id}/{timestamp}/{camera_view}.mp4` 组织存储
 - **视频流式播放**：MinIO 直出视频流，前端通过 video.js 播放
-- **视频列表管理**：分页查询、按设备筛选、批量删除
+- **视频列表管理**：分页查询、按设备筛选、按片段批量删除（前端并发调用单视角删除接口）
 
 ### 🖥️ 多视角同步播放器
 
-- **2×2 网格布局**：同时展示四个 Tesla 摄像头视角
-- **单击放大**：点击任一视角切换为主视图（占据 75% 面积）
+- **主视图 + 2×2 缩略图布局**：同时展示四个 Tesla 摄像头视角
+- **单击放大**：点击任一视角切换为主视图（约占 2/3 面积，缩略图区位于下方）
 - **同步控制**：播放/暂停/seek 四视角同步
 - **空状态提示**：无视频时引导用户上传
 
 ### 🤖 智能问答
 
 - **自然语言检索**：基于 Qwen2.5:7B 的理解能力，用自然语言查询视频数据
-- **Function Calling**：模型自动调用搜索工具，查询 Spark 标注数据库
+- **Function Calling**：模型自动调用搜索工具，查询 Parquet 标注数据湖（API 进程内 pyarrow 直读 MinIO）
 - **多轮对话**：维护对话历史，支持上下文连续提问
-- **视频结果展示**：搜索结果包含视频 ID、时间戳、匹配标签
+- **结果统计展示**：返回匹配帧数、目标/标签分布、命中视频列表
 
 ### 🔬 联合标注
 
 - **Chinese-CLIP 全局标注**：提取帧级语义向量，零样本分类得到场景标签（高速公路、雨天、十字路口等 12 类）
 - **Grounding DINO 目标检测**：检测车辆、行人、交通标志、红绿灯等 7 类目标
-- **质量评估**：自动计算模糊度、亮度、目标密度，生成帧级质量分数
-- **Parquet 存储**：标注结果以列式格式存储，支持高效 Spark 查询
+- **质量评估**：自动计算模糊度（Laplacian 方差），结合目标数量与场景标签生成帧级质量分数（0-100）
+- **Parquet 存储**：标注结果以列式格式存储，支持高效检索与聚合
 
 ### 📊 数据处理
 
-- **低质量过滤**：过滤模糊、过暗、目标过少的帧
-- **语义筛选**：按场景标签 + 目标类型组合查询
-- **元数据聚合**：生成视频级统计（场景分布、目标分布、质量分布）
-- **Delta Lake**：ACID 事务支持，版本化管理标注数据
+- **数据湖检索**：检索服务直读 MinIO 数据湖 Parquet 文件（pyarrow），支持场景标签 + 目标类型 + 时间范围组合筛选
+- **低质量过滤**：spark-jobs/data_cleaning.py 过滤模糊、目标过少的帧
+- **元数据聚合**：spark-jobs/metadata_aggregation.py 生成视频级统计（场景分布、目标分布、质量分布）
+- **离线批处理**：Spark 作业独立于 docker-compose 编排，需手动提交执行
 
 ---
 
@@ -154,11 +154,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 cp .env.example .env
 # 编辑 .env，按需修改端口、路径等
 
-# 2. 拉取 Ollama 模型（仅首次）
-docker compose exec ollama ollama pull qwen2.5:7b
-
-# 3. 启动所有服务
+# 2. 启动所有服务
 docker compose up -d
+
+# 3. 拉取 Ollama 模型（仅首次，需在服务启动后执行）
+docker compose exec ollama ollama pull qwen2.5:7b
 
 # 4. 验证服务
 docker compose ps
@@ -181,18 +181,20 @@ docker compose ps
 
 ### 容器服务说明
 
-| 服务              | 镜像              | GPU   | 端口      | 说明            |
-| ----------------- | ----------------- | ----- | --------- | --------------- |
-| `redis`           | redis:7-alpine    | -     | -         | 消息队列 / 缓存 |
-| `minio`           | minio/minio       | -     | 9000/9001 | 对象存储        |
-| `ollama`          | ollama            | GPU 2 | 11434     | LLM 推理        |
-| `chinese-clip`    | annotation-worker | GPU 0 | 8500      | 语义向量服务    |
-| `locate-anything` | annotation-worker | GPU 1 | 8501      | 目标检测服务    |
-| `api`             | backend           | -     | 8000      | FastAPI 后端    |
-| `celery-worker`   | backend           | -     | -         | 异步任务处理    |
-| `spark-master`    | bitnami/spark:3.5 | -     | 7077/8080 | Spark 主节点    |
-| `spark-worker`    | bitnami/spark:3.5 | -     | -         | Spark 工作节点  |
-| `frontend`        | frontend          | -     | 80        | Nginx + React   |
+| 服务              | 镜像              | GPU   | 端口（容器→宿主）   | 说明            |
+| ----------------- | ----------------- | ----- | ------------------- | --------------- |
+| `redis`           | redis:7-alpine    | -     | -                   | 消息队列 / 缓存 |
+| `minio`           | minio/minio       | -     | 9000/9001→9002/9003 | 对象存储        |
+| `ollama`          | ollama            | GPU 2 | 11434→11435         | LLM 推理        |
+| `chinese-clip`    | annotation-worker | GPU 0 | 8500→8500           | 语义向量服务    |
+| `locate-anything` | annotation-worker | GPU 1 | 8501→8501           | 目标检测服务    |
+| `api`             | backend           | -     | 8000→8000           | FastAPI 后端    |
+| `celery-worker`   | backend           | -     | -                   | 异步任务处理    |
+| `spark-master`    | bitnami/spark:3.5 | -     | 7077/8080→7077/8082 | Spark 主节点    |
+| `spark-worker`    | bitnami/spark:3.5 | -     | -                   | Spark 工作节点  |
+| `frontend`        | frontend          | -     | 80→3000             | Nginx + React   |
+
+> 镜像名为简化写法，实际带私有仓库前缀（`${REGISTRY}`，默认 `registry.cn-beijing.aliyuncs.com/cswangrf`）与 `${TAG}` 标签。
 
 ---
 
@@ -252,14 +254,14 @@ POST /api/chat/query
 
 | 页面              | 功能                                       |
 | ----------------- | ------------------------------------------ |
-| **Dashboard**     | 数据看板（处理进度、标注统计）             |
+| **Dashboard**     | 数据看板（标注统计、任务概览）             |
 | **Video Browser** | 视频浏览（多视角播放器 + 视频列表 + 上传） |
 | **Smart Q&A**     | 智能问答（自然语言视频检索）               |
-| **Settings**      | 平台配置                                   |
+| **Settings**      | 平台配置（占位，待开发）                   |
 
 ### Video Browser 页面
 
-- **上方播放区**：2×2 网格展示 4 个摄像头视角，支持同步播放/暂停/seek
+- **上方播放区**：主视图 + 2×2 缩略图展示 4 个摄像头视角，支持同步播放/暂停/seek
 - **信息栏**：显示当前播放的设备 ID 和时间戳
 - **下方列表区**：视频片段列表（按设备+时间分组），支持播放/删除操作
 - **上传按钮**：打开上传弹窗
@@ -295,8 +297,8 @@ Celery 异步任务
     ├── 4. 计算模糊分数 + 质量评分
     └── 5. 保存为 Parquet (frame_annotations)
     ↓
-Spark 数据处理
-    ├── data_cleaning.py: 低质量过滤 + 语义筛选
+离线 Spark 批处理（spark-jobs/ 脚本，未挂入 compose 编排，需手动提交）
+    ├── data_cleaning.py: 低质量过滤
     └── metadata_aggregation.py: 视频级聚合统计
     ↓
 前端查询播放
@@ -332,6 +334,8 @@ Spark 数据处理
 }
 ```
 
+> 注：`objects` 与 `global_tags` 在 Parquet 中以 JSON 字符串列存储（非嵌套结构）。
+
 ### 检测类别
 
 **场景标签**（Chinese-CLIP 零样本分类，12 类）：
@@ -339,6 +343,8 @@ Spark 数据处理
 
 **目标类别**（Grounding DINO 检测，7 类）：
 车辆、行人、交通标志、红绿灯、障碍物、自行车、摩托车
+
+> 开放词汇检测：与提示词重合度低的检测结果归入兜底类「未知目标」。
 
 ---
 
@@ -362,14 +368,12 @@ GPU 3 → 预留（可扩展模型或批量推理）
 | `MINIO_ROOT_USER`         | `minioadmin`                  | MinIO 用户名            |
 | `MINIO_ROOT_PASSWORD`     | `minioadmin`                  | MinIO 密码              |
 | `REDIS_URL`               | `redis://redis:6379/0`        | Redis 连接              |
-| `OLLAMA_HOST`             | `ollama:11434`                | Ollama 服务地址         |
+| `OLLAMA_HOST`             | `http://ollama:11434`         | Ollama 服务地址         |
 | `OLLAMA_MODEL`            | `qwen2.5:7b`                  | 默认 LLM 模型           |
-| `LLM_PROVIDER`            | `ollama`                      | LLM 提供商              |
+| `LLM_PROVIDER`            | `ollama`                      | LLM 提供商（预留：当前实现仅支持 Ollama） |
 | `CLIP_SERVICE`            | `http://chinese-clip:8500`    | Chinese-CLIP 服务       |
 | `LAM_SERVICE`             | `http://locate-anything:8501` | 目标检测服务            |
-| `FRAME_EXTRACT_INTERVAL`  | `30`                          | 抽帧间隔（帧）          |
-| `VIDEO_CLIP_DURATION_SEC` | `60`                          | 视频切分片段时长        |
-| `DATA_ROOT`               | `/mnt/sdc/vision-platform`    | 数据持久化根目录        |
+| `DATA_ROOT`               | `/data/tesla-vision-platform` | 数据持久化根目录        |
 | `FRONTEND_PORT`           | `3000`                        | 前端端口                |
 | `API_PORT`                | `8000`                        | API 端口                |
 | `MINIO_API_PORT`          | `9002`                        | MinIO API 端口          |

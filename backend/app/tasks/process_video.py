@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import tempfile
-from datetime import datetime
 from typing import List, Dict, Any
 
 import pyarrow as pa
@@ -35,23 +34,18 @@ _minio_client = Minio(
     secure=False,
 )
 
-# 任务状态存储（引用 tasks.py 中的共享存储）
-try:
-    from app.routers.tasks import _task_store, TaskStatus
-except ImportError:
-    _task_store = {}
+# 任务状态经 Redis 共享存储更新（API 服务可见）
+from app.tasks.task_store import update_task
 
 
 def _update_task_status(task_id: str, status: str, progress: float = None, error: str = None):
     """更新任务状态"""
-    task = _task_store.get(task_id)
-    if task:
-        task.status = status
-        if progress is not None:
-            task.progress = progress
-        if error:
-            task.error = error
-        task.updated_at = datetime.now()
+    fields = {"status": status}
+    if progress is not None:
+        fields["progress"] = progress
+    if error:
+        fields["error"] = error
+    update_task(task_id, **fields)
 
 
 def _download_video_from_minio(video_id: str, dest_path: str) -> bool:
