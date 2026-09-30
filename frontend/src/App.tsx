@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Layout, Menu, Typography } from 'antd';
 import {
   DashboardOutlined,
+  FileSearchOutlined,
   VideoCameraOutlined,
   RobotOutlined,
   SettingOutlined,
@@ -9,11 +10,12 @@ import {
 import VideoBrowser from './components/VideoBrowser';
 import ChatPanel from './components/ChatPanel';
 import Dashboard from './components/Dashboard';
+import AnnotationBrowser from './components/AnnotationBrowser';
 
 const { Header, Content, Sider } = Layout;
 const { Title } = Typography;
 
-type PageKey = 'dashboard' | 'browser' | 'chat' | 'settings';
+type PageKey = 'dashboard' | 'browser' | 'chat' | 'settings' | 'annotations';
 
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<PageKey>('browser');
@@ -26,6 +28,8 @@ const App: React.FC = () => {
         return <VideoBrowser />;
       case 'chat':
         return <ChatPanel />;
+      case 'annotations':
+        return <AnnotationBrowser />;
       case 'settings':
         return (
           <div style={{ padding: 24 }}>
@@ -62,6 +66,7 @@ const App: React.FC = () => {
             items={[
               { key: 'dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
               { key: 'browser', icon: <VideoCameraOutlined />, label: 'Video Browser' },
+              { key: 'annotations', icon: <FileSearchOutlined />, label: '标注检索' },
               { key: 'chat', icon: <RobotOutlined />, label: 'Smart Q&A' },
               { key: 'settings', icon: <SettingOutlined />, label: 'Settings' },
             ]}

@@ -178,6 +178,136 @@ export async function listTasks(status?: string): Promise<TaskResponse[]> {
 }
 
 // ============================================================
+// 标注检索 API（标注结果可视化）
+// ============================================================
+export interface AnnotationOptions {
+  objects: string[];
+  tags: string[];
+}
+
+export interface AnnotationRunObjectStat {
+  class_name: string;
+  count: number;
+  max_confidence: number;
+}
+
+export interface AnnotationRunTagStat {
+  name: string;
+  count: number;
+}
+
+// 连续帧片段：同一视频中连续命中的帧合并为一条结果
+export interface AnnotationRun {
+  run_id: string;
+  video_id: string;
+  device_id: string;
+  camera_view: string;
+  content_date: string;
+  uploaded_date: string;
+  start_frame: number;
+  end_frame: number;
+  frame_count: number;
+  start_sec: number;
+  end_sec: number;
+  objects: AnnotationRunObjectStat[];
+  tags: AnnotationRunTagStat[];
+  avg_quality: number;
+  has_raw_video: boolean;
+  thumbnail_url: string;
+  clip_url: string;
+}
+
+export interface AnnotationSearchResponse {
+  items: AnnotationRun[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface AnnotationBBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface AnnotationDetectedObject {
+  bbox: AnnotationBBox;
+  class_name: string;
+  confidence: number;
+  attributes?: Record<string, unknown>;
+}
+
+export interface AnnotationFrameDetail {
+  video_id: string;
+  frame_index: number;
+  timestamp_sec: number;
+  global_tags: string[];
+  objects: AnnotationDetectedObject[];
+  blur_score: number | null;
+  quality_score: number | null;
+}
+
+export interface AnnotationFramesResponse {
+  video_id: string;
+  frames: AnnotationFrameDetail[];
+}
+
+export async function getAnnotationOptions(): Promise<AnnotationOptions> {
+  const response = await apiClient.get<AnnotationOptions>('/annotations/options');
+  return response.data;
+}
+
+export async function searchAnnotations(params: {
+  objects?: string[];
+  tags?: string[];
+  page: number;
+  page_size: number;
+}): Promise<AnnotationSearchResponse> {
+  const query: Record<string, string | number> = {
+    page: params.page,
+    page_size: params.page_size,
+  };
+  if (params.objects && params.objects.length > 0) {
+    query.objects = params.objects.join(',');
+  }
+  if (params.tags && params.tags.length > 0) {
+    query.tags = params.tags.join(',');
+  }
+  const response = await apiClient.get<AnnotationSearchResponse>(
+    '/annotations/search',
+    { params: query },
+  );
+  return response.data;
+}
+
+export async function getAnnotationFrames(
+  videoId: string,
+  start: number,
+  end: number,
+): Promise<AnnotationFramesResponse> {
+  const response = await apiClient.get<AnnotationFramesResponse>(
+    `/annotations/frames/${encodeURIComponent(videoId)}`,
+    { params: { start, end } },
+  );
+  return response.data;
+}
+
+/** 标注帧图 URL（按需抽取 + MinIO 缓存） */
+export function getAnnotationFrameUrl(videoId: string, frameIndex: number): string {
+  return `${API_BASE_URL}/annotations/frame/${encodeURIComponent(videoId)}/${frameIndex}`;
+}
+
+/** 标注视频切片 URL（[start_sec, end_sec+1) 时间段） */
+export function getAnnotationClipUrl(
+  videoId: string,
+  startSec: number,
+  endSec: number,
+): string {
+  return `${API_BASE_URL}/annotations/clip/${encodeURIComponent(videoId)}?start_sec=${startSec}&end_sec=${endSec}`;
+}
+
+// ============================================================
 // 视频流 URL 工具
 // ============================================================
 /**

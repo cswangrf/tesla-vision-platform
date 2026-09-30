@@ -98,6 +98,63 @@ class AnnotationSummary(BaseModel):
 
 
 # ============================================================
+# 标注检索（连续帧片段）
+# ============================================================
+class AnnotationOptionsResponse(BaseModel):
+    """标注检索筛选项（检测目标 / 场景标签词表）"""
+    objects: List[str]
+    tags: List[str]
+
+
+class AnnotationRunObjectStat(BaseModel):
+    """run 内检测目标聚合统计"""
+    class_name: str
+    count: int
+    max_confidence: float
+
+
+class AnnotationRunTagStat(BaseModel):
+    """run 内场景标签聚合统计"""
+    name: str
+    count: int
+
+
+class AnnotationRun(BaseModel):
+    """连续帧片段（同一视频中连续命中的帧合并为一条）"""
+    run_id: str
+    video_id: str
+    device_id: str = ""
+    camera_view: str = ""
+    content_date: str = ""
+    uploaded_date: str = ""
+    start_frame: int
+    end_frame: int
+    frame_count: int
+    start_sec: float
+    end_sec: float
+    objects: List[AnnotationRunObjectStat] = []
+    tags: List[AnnotationRunTagStat] = []
+    avg_quality: float = 0.0
+    has_raw_video: bool = False
+    thumbnail_url: str = ""
+    clip_url: str = ""
+
+
+class AnnotationSearchResponse(BaseModel):
+    """标注检索分页响应"""
+    items: List[AnnotationRun]
+    total: int
+    page: int
+    page_size: int
+
+
+class AnnotationFramesResponse(BaseModel):
+    """run 范围内逐帧明细"""
+    video_id: str
+    frames: List[FrameAnnotation] = []
+
+
+# ============================================================
 # 任务相关
 # ============================================================
 class TaskCreateRequest(BaseModel):
